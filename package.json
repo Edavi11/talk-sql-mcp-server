@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "talk-sql": "./dist/index.js"
+    "talk-sql": "dist/index.js"
   },
   "files": [
     "dist"
@@ -22,7 +22,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Edavi11/talk-sql-mcp-server.git"
+    "url": "git+https://github.com/Edavi11/talk-sql-mcp-server.git"
   },
   "homepage": "https://github.com/Edavi11/talk-sql-mcp-server#readme",
   "bugs": {
