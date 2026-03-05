@@ -1,6 +1,6 @@
 {
   "name": "talk-sql",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server for SQL database integration (PostgreSQL, MySQL, SQL Server, SQLite)",
   "type": "module",
   "main": "dist/index.js",
