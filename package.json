@@ -1,0 +1,60 @@
+{
+  "name": "talk-sql",
+  "version": "1.0.0",
+  "description": "MCP server for SQL database integration (PostgreSQL, MySQL, SQL Server, SQLite)",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "talk-sql": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Edavi11/talk-sql-mcp-server.git"
+  },
+  "homepage": "https://github.com/Edavi11/talk-sql-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/Edavi11/talk-sql-mcp-server/issues"
+  },
+  "keywords": [
+    "mcp",
+    "sql",
+    "database",
+    "postgresql",
+    "mysql",
+    "sqlserver",
+    "sqlite"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.1",
+    "better-sqlite3": "^9.0.0",
+    "express": "^4.18.2",
+    "mssql": "^10.0.0",
+    "mysql2": "^3.6.0",
+    "pg": "^8.11.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/express": "^4.17.21",
+    "@types/mssql": "^9.1.9",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
