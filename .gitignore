@@ -20,3 +20,5 @@ dist/
 .cursor/rules/codacy.mdc
 .cursor/rules/codacy.mdc
 skills-lock.json
+.mcp.json
+coverage/
