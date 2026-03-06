@@ -6,7 +6,6 @@
 import pg from "pg";
 import mysql from "mysql2/promise";
 import sql from "mssql";
-import Database from "better-sqlite3";
 import { DatabaseType, DatabaseConnection } from "../types.js";
 
 const { Pool: PgPool } = pg;
@@ -167,11 +166,12 @@ async function createSQLiteConnection(connectionString: string): Promise<Connect
   }
   
   try {
+    const { default: Database } = await import("better-sqlite3");
     const db = new Database(filePath);
-    
+
     // Test connection
     db.prepare("SELECT 1").get();
-    
+
     return {
       type: DatabaseType.SQLITE,
       pool: db,

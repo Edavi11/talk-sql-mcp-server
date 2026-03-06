@@ -6,7 +6,7 @@
 import pg from "pg";
 import mysql from "mysql2/promise";
 import sql from "mssql";
-import Database from "better-sqlite3";
+import type BetterSqlite3 from "better-sqlite3";
 import { DatabaseType, QueryResult } from "../types.js";
 import { ConnectionPool, detectDatabaseType } from "./connection-manager.js";
 import { MAX_QUERY_LENGTH } from "../constants.js";
@@ -73,7 +73,7 @@ export async function executeQuery(options: ExecuteQueryOptions): Promise<Execut
     case DatabaseType.SQLSERVER:
       return executeSQLServerQuery(connectionPool.pool as sql.ConnectionPool, query, params);
     case DatabaseType.SQLITE:
-      return executeSQLiteQuery(connectionPool.pool as Database.Database, query, params);
+      return executeSQLiteQuery(connectionPool.pool as BetterSqlite3.Database, query, params);
     default:
       throw new Error(`Unsupported database type: ${connectionPool.type}`);
   }
@@ -219,7 +219,7 @@ async function executeSQLServerQuery(
  * Executes a query on SQLite
  */
 async function executeSQLiteQuery(
-  db: Database.Database,
+  db: BetterSqlite3.Database,
   query: string,
   params: unknown[]
 ): Promise<ExecuteQueryResult> {
