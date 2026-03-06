@@ -58,7 +58,11 @@ export const OffsetSchema = z.number()
   .describe("Number of results to skip for pagination");
 
 export const WhereClauseSchema = z.string()
-  .max(5000, "WHERE clause is too long")
+  .max(1000, "WHERE clause is too long")
+  .refine(
+    (val) => !/(--|\/\*|\*\/|;\s*(drop|delete|truncate|insert|update|alter|create|exec|execute|xp_)\s)/i.test(val),
+    "WHERE clause contains potentially dangerous SQL patterns"
+  )
   .optional()
   .describe("SQL WHERE clause (without the WHERE keyword, e.g., 'age > 18')");
 

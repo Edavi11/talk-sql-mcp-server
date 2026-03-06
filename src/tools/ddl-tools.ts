@@ -15,11 +15,11 @@ import { getConnectionString } from "../constants.js";
  */
 export const ColumnDefinitionSchema = z.object({
   name: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_]+$/),
-  type: z.string().min(1).max(100),
+  type: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_()\s,]+$/, "Column type contains invalid characters"),
   nullable: z.boolean().optional(),
   primary_key: z.boolean().optional(),
   unique: z.boolean().optional(),
-  default: z.string().optional(),
+  default: z.string().max(200).regex(/^[a-zA-Z0-9_.'\-\s()]+$/, "Default value contains invalid characters").optional(),
   auto_increment: z.boolean().optional()
 }).strict();
 
