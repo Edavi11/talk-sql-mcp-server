@@ -93,7 +93,7 @@ Add the following to your `~/.cursor/mcp.json`:
   "mcpServers": {
     "talk-sql": {
       "command": "npx",
-      "args": ["talk-sql"],
+      "args": ["-y", "talk-sql"],
       "env": {
         "SQL_CONNECTION_STRING": "mssql://user:password@localhost:1433/MyDatabase?encrypt=false&trustServerCertificate=true"
       }
@@ -111,7 +111,7 @@ Add the following to your `claude_desktop_config.json`:
   "mcpServers": {
     "talk-sql": {
       "command": "npx",
-      "args": ["talk-sql"],
+      "args": ["-y", "talk-sql"],
       "env": {
         "SQL_CONNECTION_STRING": "postgresql://user:password@localhost:5432/mydb"
       }
