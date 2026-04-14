@@ -4,6 +4,11 @@
  *
  * MCP server for interacting with SQL databases (PostgreSQL, MySQL, SQL Server, SQLite)
  * Supports listing databases/schemas, executing SQL, creating tables/relations/triggers
+ *
+ * Connection modes:
+ *   - TALK_SQL_CONFIG: path to a JSON config file with named connections (recommended)
+ *   - SQL_CONNECTION_STRING: single connection string (legacy)
+ *   - connection_string param: pass inline per tool call
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -15,6 +20,7 @@ import express, { Request, Response } from "express";
 import { testConnection, TestConnectionInputSchema } from "./tools/database-tools.js";
 import { listDatabases, ListDatabasesInputSchema } from "./tools/database-tools.js";
 import { listSchemas, ListSchemasInputSchema } from "./tools/database-tools.js";
+import { listConnections, ListConnectionsInputSchema } from "./tools/database-tools.js";
 import { executeSQL, ExecuteSQLInputSchema } from "./tools/query-tools.js";
 import { selectData, SelectDataInputSchema } from "./tools/query-tools.js";
 import { createTable, CreateTableInputSchema } from "./tools/ddl-tools.js";
@@ -27,6 +33,49 @@ const server = new McpServer({
   version: "1.0.0"
 });
 
+// Register db_list_connections tool
+server.registerTool(
+  "db_list_connections",
+  {
+    title: "List Configured Connections",
+    description: `List all named database connections configured in the talk-sql config file.
+
+Use this tool first when you are unsure which connection to use, or to discover available connection names before calling other db_* tools.
+
+Returns each connection's name, database type, and whether it uses an SSH tunnel.
+Passwords and full connection strings are never exposed.
+
+Args:
+  - response_format ('markdown' | 'json'): Output format (default: 'markdown')
+
+Returns:
+  {
+    "connections": [
+      { "name": string, "type": string, "has_ssh": boolean }
+    ],
+    "total": number,
+    "note": string
+  }
+
+Setup:
+  Set TALK_SQL_CONFIG to the path of your JSON config file:
+  [
+    { "name": "local", "connectionString": "postgresql://user:pass@localhost:5432/db" },
+    { "name": "remote", "connectionString": "postgresql://user:pass@server:5432/db" }
+  ]`,
+    inputSchema: ListConnectionsInputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    return await listConnections(params);
+  }
+);
+
 // Register db_ping tool
 server.registerTool(
   "db_ping",
@@ -37,8 +86,11 @@ server.registerTool(
 ALWAYS use this tool first if any other db_* tool returns a connection error, or if you are unsure whether the connection string is correct. It helps diagnose and recover from connection failures before retrying.
 
 Args:
-  - connection_string (string, optional): Database connection string. If not provided, uses SQL_CONNECTION_STRING environment variable.
+  - connection_name (string, optional): Name of a pre-configured connection (from TALK_SQL_CONFIG). Use db_list_connections to see available names.
+  - connection_string (string, optional): Database connection string. Used if connection_name is not provided.
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
+
+If neither connection_name nor connection_string is provided, falls back to SQL_CONNECTION_STRING environment variable or the only configured connection in TALK_SQL_CONFIG.
 
 Returns:
   On success:
@@ -74,11 +126,14 @@ server.registerTool(
     title: "List Databases",
     description: `List all databases available in the database server.
 
-This tool connects to the database server using the provided connection string and returns a list of all available databases. It works with PostgreSQL, MySQL, SQL Server, and SQLite.
+This tool connects to the database server using the provided connection and returns a list of all available databases. It works with PostgreSQL, MySQL, SQL Server, and SQLite.
 
 Args:
-  - connection_string (string, optional): Database connection string (e.g., postgresql://user:pass@host:port/db). If not provided, uses SQL_CONNECTION_STRING environment variable.
+  - connection_name (string, optional): Name of a pre-configured connection (from TALK_SQL_CONFIG). Use db_list_connections to see available names.
+  - connection_string (string, optional): Database connection string (e.g., postgresql://user:pass@host:port/db). Used if connection_name is not provided.
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
+
+If neither connection_name nor connection_string is provided, falls back to SQL_CONNECTION_STRING environment variable or the only configured connection in TALK_SQL_CONFIG.
 
 Returns:
   For JSON format: Structured data with schema:
@@ -92,7 +147,7 @@ Returns:
   }
 
 Examples:
-  - Use when: "Show me all databases" -> params with connection_string
+  - Use when: "Show me all databases" -> params with connection_name
   - Use when: "List databases in PostgreSQL" -> params with postgresql:// connection string
 
 Error Handling:
@@ -122,9 +177,12 @@ server.registerTool(
 This tool connects to the database and returns information about all schemas and the tables within each schema. For databases without schema support (like SQLite), it returns tables in the main/default schema.
 
 Args:
-  - connection_string (string): Database connection string
+  - connection_name (string, optional): Name of a pre-configured connection (from TALK_SQL_CONFIG). Use db_list_connections to see available names.
+  - connection_string (string, optional): Database connection string. Used if connection_name is not provided.
   - database (string, optional): Specific database name (optional, uses connection string database if not provided)
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
+
+If neither connection_name nor connection_string is provided, falls back to SQL_CONNECTION_STRING environment variable or the only configured connection in TALK_SQL_CONFIG.
 
 Returns:
   For JSON format: Structured data with schema:
@@ -144,8 +202,8 @@ Returns:
   }
 
 Examples:
-  - Use when: "Show me all tables" -> params with connection_string
-  - Use when: "List schemas in my database" -> params with connection_string and optional database
+  - Use when: "Show me all tables" -> params with connection_name
+  - Use when: "List schemas in my database" -> params with connection_name and optional database
 
 Error Handling:
   - If this tool returns a connection error, use db_ping first to verify and fix the connection
@@ -174,9 +232,12 @@ server.registerTool(
 This tool can execute SELECT, INSERT, UPDATE, DELETE, and DDL statements. It returns results for SELECT queries or confirmation for DML/DDL operations.
 
 Args:
-  - connection_string (string): Database connection string
+  - connection_name (string, optional): Name of a pre-configured connection (from TALK_SQL_CONFIG). Use db_list_connections to see available names.
+  - connection_string (string, optional): Database connection string. Used if connection_name is not provided.
   - query (string): SQL query to execute (max 100,000 characters)
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
+
+If neither connection_name nor connection_string is provided, falls back to SQL_CONNECTION_STRING environment variable or the only configured connection in TALK_SQL_CONFIG.
 
 Returns:
   For SELECT queries (JSON format):
@@ -227,7 +288,8 @@ server.registerTool(
 This tool provides a convenient way to query table data with built-in pagination, column selection, and WHERE clause support. It automatically handles pagination metadata.
 
 Args:
-  - connection_string (string): Database connection string
+  - connection_name (string, optional): Name of a pre-configured connection (from TALK_SQL_CONFIG). Use db_list_connections to see available names.
+  - connection_string (string, optional): Database connection string. Used if connection_name is not provided.
   - table (string): Table name to query
   - schema (string, optional): Schema name (optional, uses default schema if not provided)
   - columns (string[], optional): Array of column names to select (if not provided, selects all columns)
@@ -235,6 +297,8 @@ Args:
   - limit (number, optional): Maximum results to return (default: 100, max: 1000)
   - offset (number, optional): Number of results to skip (default: 0)
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
+
+If neither connection_name nor connection_string is provided, falls back to SQL_CONNECTION_STRING environment variable or the only configured connection in TALK_SQL_CONFIG.
 
 Returns:
   For JSON format: Paginated result with schema:
@@ -282,7 +346,8 @@ server.registerTool(
 This tool creates a table with the specified columns, data types, and constraints (primary keys, unique, nullable, defaults, auto-increment).
 
 Args:
-  - connection_string (string): Database connection string
+  - connection_name (string, optional): Name of a pre-configured connection (from TALK_SQL_CONFIG). Use db_list_connections to see available names.
+  - connection_string (string, optional): Database connection string. Used if connection_name is not provided.
   - schema (string, optional): Schema name (optional, uses default schema if not provided)
   - table (string): Table name to create
   - columns (array): Array of column definitions, each with:
@@ -294,6 +359,8 @@ Args:
     - default (string, optional): Default value
     - auto_increment (boolean, optional): Whether column auto-increments
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
+
+If neither connection_name nor connection_string is provided, falls back to SQL_CONNECTION_STRING environment variable or the only configured connection in TALK_SQL_CONFIG.
 
 Returns:
   For JSON format:
@@ -337,7 +404,8 @@ server.registerTool(
 This tool adds foreign key constraints to link columns in one table to columns in another table, with optional ON DELETE and ON UPDATE actions.
 
 Args:
-  - connection_string (string): Database connection string
+  - connection_name (string, optional): Name of a pre-configured connection (from TALK_SQL_CONFIG). Use db_list_connections to see available names.
+  - connection_string (string, optional): Database connection string. Used if connection_name is not provided.
   - schema (string, optional): Schema name (optional, uses default schema if not provided)
   - table (string): Table name to add foreign keys to
   - foreign_keys (array): Array of foreign key definitions, each with:
@@ -347,6 +415,8 @@ Args:
     - on_delete ('CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION', optional): Action on delete
     - on_update ('CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION', optional): Action on update
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
+
+If neither connection_name nor connection_string is provided, falls back to SQL_CONNECTION_STRING environment variable or the only configured connection in TALK_SQL_CONFIG.
 
 Returns:
   For JSON format:
@@ -391,7 +461,8 @@ server.registerTool(
 This tool creates a trigger that executes SQL code before or after INSERT, UPDATE, or DELETE operations on a table. The trigger syntax is automatically adapted to the database type.
 
 Args:
-  - connection_string (string): Database connection string
+  - connection_name (string, optional): Name of a pre-configured connection (from TALK_SQL_CONFIG). Use db_list_connections to see available names.
+  - connection_string (string, optional): Database connection string. Used if connection_name is not provided.
   - schema (string, optional): Schema name (optional, uses default schema if not provided)
   - table (string): Table name to create trigger on
   - trigger_name (string): Name for the trigger
@@ -399,6 +470,8 @@ Args:
   - event ('INSERT' | 'UPDATE' | 'DELETE'): Event that fires trigger
   - procedure (string): SQL code for trigger body (max 10,000 characters)
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
+
+If neither connection_name nor connection_string is provided, falls back to SQL_CONNECTION_STRING environment variable or the only configured connection in TALK_SQL_CONFIG.
 
 Returns:
   For JSON format:

@@ -63,3 +63,22 @@ export enum TriggerEvent {
   UPDATE = "UPDATE",
   DELETE = "DELETE"
 }
+
+export interface SshConfig {
+  host: string;
+  port?: number;
+  username: string;
+  privateKeyPath?: string;
+  password?: string;
+}
+
+export interface NamedConnection {
+  name: string;
+  connectionString: string;
+  ssh?: SshConfig;
+}
+
+export interface ResolvedConnection {
+  connectionString: string;
+  cleanup: () => Promise<void>;
+}

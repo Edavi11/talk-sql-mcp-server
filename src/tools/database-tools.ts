@@ -7,13 +7,14 @@ import { z } from "zod";
 import { DatabaseType, ResponseFormat } from "../types.js";
 import { createConnectionPool, detectDatabaseType } from "../services/connection-manager.js";
 import { executeQuery, formatResultsAsMarkdown, formatResultsAsJSON } from "../services/query-executor.js";
-import { ConnectionStringSchema, ResponseFormatSchema, DatabaseNameSchema } from "../schemas/connection.js";
-import { getConnectionString } from "../constants.js";
+import { ConnectionStringSchema, ConnectionNameSchema, ResponseFormatSchema, DatabaseNameSchema } from "../schemas/connection.js";
+import { resolveConnection, getNamedConnections } from "../constants.js";
 
 /**
  * Schema for db_ping tool
  */
 export const TestConnectionInputSchema = z.object({
+  connection_name: ConnectionNameSchema,
   connection_string: ConnectionStringSchema,
   response_format: ResponseFormatSchema
 }).strict();
@@ -24,6 +25,7 @@ export type TestConnectionInput = z.infer<typeof TestConnectionInputSchema>;
  * Schema for db_list_databases tool
  */
 export const ListDatabasesInputSchema = z.object({
+  connection_name: ConnectionNameSchema,
   connection_string: ConnectionStringSchema,
   response_format: ResponseFormatSchema
 }).strict();
@@ -31,15 +33,25 @@ export const ListDatabasesInputSchema = z.object({
 export type ListDatabasesInput = z.infer<typeof ListDatabasesInputSchema>;
 
 /**
- * Schema for sql_list_schemas tool
+ * Schema for db_list_tables tool
  */
 export const ListSchemasInputSchema = z.object({
+  connection_name: ConnectionNameSchema,
   connection_string: ConnectionStringSchema,
   database: DatabaseNameSchema,
   response_format: ResponseFormatSchema
 }).strict();
 
 export type ListSchemasInput = z.infer<typeof ListSchemasInputSchema>;
+
+/**
+ * Schema for db_list_connections tool
+ */
+export const ListConnectionsInputSchema = z.object({
+  response_format: ResponseFormatSchema
+}).strict();
+
+export type ListConnectionsInput = z.infer<typeof ListConnectionsInputSchema>;
 
 /**
  * Gets the query to list databases based on database type
@@ -69,7 +81,7 @@ function getListSchemasQuery(dbType: DatabaseType, database?: string): string {
       if (database) {
         // Connect to specific database and list schemas
         return `
-          SELECT 
+          SELECT
             schema_name as schema_name,
             COUNT(table_name) as table_count
           FROM information_schema.tables
@@ -79,7 +91,7 @@ function getListSchemasQuery(dbType: DatabaseType, database?: string): string {
         `;
       }
       return `
-        SELECT 
+        SELECT
           schema_name as schema_name,
           COUNT(table_name) as table_count
         FROM information_schema.tables
@@ -90,7 +102,7 @@ function getListSchemasQuery(dbType: DatabaseType, database?: string): string {
     case DatabaseType.MYSQL:
       if (database) {
         return `
-          SELECT 
+          SELECT
             table_schema as schema_name,
             COUNT(table_name) as table_count
           FROM information_schema.tables
@@ -100,7 +112,7 @@ function getListSchemasQuery(dbType: DatabaseType, database?: string): string {
         `;
       }
       return `
-        SELECT 
+        SELECT
           table_schema as schema_name,
           COUNT(table_name) as table_count
         FROM information_schema.tables
@@ -111,7 +123,7 @@ function getListSchemasQuery(dbType: DatabaseType, database?: string): string {
     case DatabaseType.SQLSERVER:
       if (database) {
         return `
-          SELECT 
+          SELECT
             SCHEMA_NAME(schema_id) as schema_name,
             COUNT(*) as table_count
           FROM ${database}.sys.tables
@@ -120,7 +132,7 @@ function getListSchemasQuery(dbType: DatabaseType, database?: string): string {
         `;
       }
       return `
-        SELECT 
+        SELECT
           SCHEMA_NAME(schema_id) as schema_name,
           COUNT(*) as table_count
         FROM sys.tables
@@ -130,7 +142,7 @@ function getListSchemasQuery(dbType: DatabaseType, database?: string): string {
     case DatabaseType.SQLITE:
       // SQLite doesn't have schemas, return tables in main schema
       return `
-        SELECT 
+        SELECT
           'main' as schema_name,
           COUNT(*) as table_count
         FROM sqlite_master
@@ -146,11 +158,11 @@ function getListSchemasQuery(dbType: DatabaseType, database?: string): string {
  */
 function getSchemaDetailsQuery(dbType: DatabaseType, schema?: string): string {
   const schemaFilter = schema ? `AND table_schema = '${schema.replace(/'/g, "''")}'` : "";
-  
+
   switch (dbType) {
     case DatabaseType.POSTGRESQL:
       return `
-        SELECT 
+        SELECT
           table_schema as schema_name,
           table_name,
           table_type
@@ -162,7 +174,7 @@ function getSchemaDetailsQuery(dbType: DatabaseType, schema?: string): string {
     case DatabaseType.MYSQL:
       const mysqlSchemaFilter = schema ? `AND table_schema = '${schema.replace(/'/g, "''")}'` : "";
       return `
-        SELECT 
+        SELECT
           table_schema as schema_name,
           table_name,
           table_type
@@ -174,7 +186,7 @@ function getSchemaDetailsQuery(dbType: DatabaseType, schema?: string): string {
     case DatabaseType.SQLSERVER:
       const sqlServerSchemaFilter = schema ? `AND SCHEMA_NAME(schema_id) = '${schema.replace(/'/g, "''")}'` : "";
       return `
-        SELECT 
+        SELECT
           SCHEMA_NAME(schema_id) as schema_name,
           name as table_name,
           type_desc as table_type
@@ -185,7 +197,7 @@ function getSchemaDetailsQuery(dbType: DatabaseType, schema?: string): string {
       `;
     case DatabaseType.SQLITE:
       return `
-        SELECT 
+        SELECT
           'main' as schema_name,
           name as table_name,
           type as table_type
@@ -202,21 +214,23 @@ function getSchemaDetailsQuery(dbType: DatabaseType, schema?: string): string {
  * Tests database connectivity and returns server info
  */
 export async function testConnection(params: TestConnectionInput): Promise<{ content: Array<{ type: "text"; text: string }>; structuredContent?: { [x: string]: unknown } }> {
-  let connectionString: string;
+  let resolved;
   try {
-    connectionString = getConnectionString(params.connection_string);
+    resolved = await resolveConnection({
+      connection_string: params.connection_string,
+      connection_name: params.connection_name
+    });
   } catch (error) {
-    const msg = "No connection string provided and SQL_CONNECTION_STRING environment variable is not set. " +
-      "Provide a connection_string parameter (e.g. postgresql://user:pass@host:5432/db).";
-    return { content: [{ type: "text", text: msg }] };
+    const msg = error instanceof Error ? error.message : String(error);
+    return { content: [{ type: "text", text: `Connection error: ${msg}` }] };
   }
 
-  const dbType = detectDatabaseType(connectionString);
+  const dbType = detectDatabaseType(resolved.connectionString);
   const startMs = Date.now();
   let connectionPool;
 
   try {
-    connectionPool = await createConnectionPool(connectionString);
+    connectionPool = await createConnectionPool(resolved.connectionString);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     const advice = getConnectionErrorAdvice(dbType, errorMsg);
@@ -226,6 +240,8 @@ export async function testConnection(params: TestConnectionInput): Promise<{ con
       return { content: [{ type: "text", text: JSON.stringify(json, null, 2) }], structuredContent: json };
     }
     return { content: [{ type: "text", text: text }] };
+  } finally {
+    await resolved.cleanup();
   }
 
   try {
@@ -293,55 +309,63 @@ function getConnectionErrorAdvice(dbType: DatabaseType, error: string): string {
  * Lists all databases
  */
 export async function listDatabases(params: ListDatabasesInput): Promise<{ content: Array<{ type: "text"; text: string }>; structuredContent?: { [x: string]: unknown } }> {
-  const connectionString = getConnectionString(params.connection_string);
-  const connectionPool = await createConnectionPool(connectionString);
-  
+  const resolved = await resolveConnection({
+    connection_string: params.connection_string,
+    connection_name: params.connection_name
+  });
+
   try {
-    const dbType = detectDatabaseType(connectionString);
-    const query = getListDatabasesQuery(dbType);
-    
-    const result = await executeQuery({
-      connectionPool,
-      query
-    });
-    
-    // Format results
-    let textContent: string;
-    if (params.response_format === ResponseFormat.MARKDOWN) {
-      textContent = `# Databases\n\n${formatResultsAsMarkdown(result.rows, result.columns)}\n\nTotal: ${result.rowCount}`;
-    } else {
-      const jsonOutput = {
-        total: result.rowCount,
-        databases: result.rows
-      };
-      textContent = formatResultsAsJSON(result.rows, result.rowCount, result.columns);
+    const connectionPool = await createConnectionPool(resolved.connectionString);
+
+    try {
+      const dbType = detectDatabaseType(resolved.connectionString);
+      const query = getListDatabasesQuery(dbType);
+
+      const result = await executeQuery({
+        connectionPool,
+        query
+      });
+
+      // Format results
+      let textContent: string;
+      if (params.response_format === ResponseFormat.MARKDOWN) {
+        textContent = `# Databases\n\n${formatResultsAsMarkdown(result.rows, result.columns)}\n\nTotal: ${result.rowCount}`;
+      } else {
+        const jsonOutput = {
+          total: result.rowCount,
+          databases: result.rows
+        };
+        textContent = formatResultsAsJSON(result.rows, result.rowCount, result.columns);
+        return {
+          content: [{ type: "text", text: textContent }],
+          structuredContent: jsonOutput
+        };
+      }
+
       return {
-        content: [{ type: "text", text: textContent }],
-        structuredContent: jsonOutput
+        content: [{ type: "text", text: textContent }]
       };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const lower = errorMsg.toLowerCase();
+      const hints: string[] = [];
+      if (lower.includes("econnrefused") || lower.includes("etimedout") || lower.includes("failed to connect") || lower.includes("connection")) {
+        hints.push("Use db_ping to diagnose and fix the connection before retrying.");
+      } else if (lower.includes("permission") || lower.includes("access denied")) {
+        hints.push("The database user may not have permission to list databases.");
+      }
+      const hintText = hints.length > 0 ? `\n\nNext steps:\n${hints.map(h => `- ${h}`).join("\n")}` : "";
+      return {
+        content: [{
+          type: "text",
+          text: `Error listing databases: ${errorMsg}${hintText}`
+        }]
+      };
+    } finally {
+      await connectionPool.close();
     }
-    
-    return {
-      content: [{ type: "text", text: textContent }]
-    };
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    const lower = errorMsg.toLowerCase();
-    const hints: string[] = [];
-    if (lower.includes("econnrefused") || lower.includes("etimedout") || lower.includes("failed to connect") || lower.includes("connection")) {
-      hints.push("Use db_ping to diagnose and fix the connection before retrying.");
-    } else if (lower.includes("permission") || lower.includes("access denied")) {
-      hints.push("The database user may not have permission to list databases.");
-    }
-    const hintText = hints.length > 0 ? `\n\nNext steps:\n${hints.map(h => `- ${h}`).join("\n")}` : "";
-    return {
-      content: [{
-        type: "text",
-        text: `Error listing databases: ${errorMsg}${hintText}`
-      }]
-    };
   } finally {
-    await connectionPool.close();
+    await resolved.cleanup();
   }
 }
 
@@ -349,98 +373,166 @@ export async function listDatabases(params: ListDatabasesInput): Promise<{ conte
  * Lists schemas and their tables
  */
 export async function listSchemas(params: ListSchemasInput): Promise<{ content: Array<{ type: "text"; text: string }>; structuredContent?: { [x: string]: unknown } }> {
-  const connectionString = getConnectionString(params.connection_string);
-  const connectionPool = await createConnectionPool(connectionString);
-  
+  const resolved = await resolveConnection({
+    connection_string: params.connection_string,
+    connection_name: params.connection_name
+  });
+
   try {
-    const dbType = detectDatabaseType(connectionString);
-    
-    // Get schema summary
-    const schemaQuery = getListSchemasQuery(dbType, params.database);
-    const schemaResult = await executeQuery({
-      connectionPool,
-      query: schemaQuery,
-      params: params.database ? [params.database] : []
-    });
-    
-    // Get detailed table information
-    const detailsQuery = getSchemaDetailsQuery(dbType, params.database);
-    const detailsResult = await executeQuery({
-      connectionPool,
-      query: detailsQuery
-    });
-    
-    // Group tables by schema
-    const schemasMap = new Map<string, Array<{ table_name: string; table_type: string }>>();
-    
-    for (const row of detailsResult.rows) {
-      if (row && typeof row === 'object') {
-        const rowObj = row as Record<string, unknown>;
-        const schemaName = String(rowObj.schema_name || 'main');
-        const tableName = String(rowObj.table_name || '');
-        const tableType = String(rowObj.table_type || '');
-        
-        if (!schemasMap.has(schemaName)) {
-          schemasMap.set(schemaName, []);
-        }
-        schemasMap.get(schemaName)!.push({ table_name: tableName, table_type: tableType });
-      }
-    }
-    
-    // Format results
-    if (params.response_format === ResponseFormat.MARKDOWN) {
-      const lines: string[] = ["# Schemas and Tables\n"];
-      
-      for (const [schemaName, tables] of schemasMap.entries()) {
-        lines.push(`## Schema: ${schemaName}`);
-        lines.push(`**Tables:** ${tables.length}\n`);
-        
-        if (tables.length > 0) {
-          lines.push("| Table Name | Type |");
-          lines.push("|------------|------|");
-          for (const table of tables) {
-            lines.push(`| ${table.table_name} | ${table.table_type} |`);
+    const connectionPool = await createConnectionPool(resolved.connectionString);
+
+    try {
+      const dbType = detectDatabaseType(resolved.connectionString);
+
+      // Get schema summary
+      const schemaQuery = getListSchemasQuery(dbType, params.database);
+      const schemaResult = await executeQuery({
+        connectionPool,
+        query: schemaQuery,
+        params: params.database ? [params.database] : []
+      });
+
+      // Get detailed table information
+      const detailsQuery = getSchemaDetailsQuery(dbType, params.database);
+      const detailsResult = await executeQuery({
+        connectionPool,
+        query: detailsQuery
+      });
+
+      // Group tables by schema
+      const schemasMap = new Map<string, Array<{ table_name: string; table_type: string }>>();
+
+      for (const row of detailsResult.rows) {
+        if (row && typeof row === 'object') {
+          const rowObj = row as Record<string, unknown>;
+          const schemaName = String(rowObj.schema_name || 'main');
+          const tableName = String(rowObj.table_name || '');
+          const tableType = String(rowObj.table_type || '');
+
+          if (!schemasMap.has(schemaName)) {
+            schemasMap.set(schemaName, []);
           }
+          schemasMap.get(schemaName)!.push({ table_name: tableName, table_type: tableType });
         }
-        lines.push("");
       }
-      
+
+      // Format results
+      if (params.response_format === ResponseFormat.MARKDOWN) {
+        const lines: string[] = ["# Schemas and Tables\n"];
+
+        for (const [schemaName, tables] of schemasMap.entries()) {
+          lines.push(`## Schema: ${schemaName}`);
+          lines.push(`**Tables:** ${tables.length}\n`);
+
+          if (tables.length > 0) {
+            lines.push("| Table Name | Type |");
+            lines.push("|------------|------|");
+            for (const table of tables) {
+              lines.push(`| ${table.table_name} | ${table.table_type} |`);
+            }
+          }
+          lines.push("");
+        }
+
+        return {
+          content: [{ type: "text", text: lines.join("\n") }]
+        };
+      } else {
+        const jsonOutput = {
+          schemas: Array.from(schemasMap.entries()).map(([schemaName, tables]) => ({
+            schema_name: schemaName,
+            table_count: tables.length,
+            tables: tables
+          }))
+        };
+
+        return {
+          content: [{ type: "text", text: JSON.stringify(jsonOutput, null, 2) }],
+          structuredContent: jsonOutput
+        };
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const lower = errorMsg.toLowerCase();
+      const hints: string[] = [];
+      if (lower.includes("econnrefused") || lower.includes("etimedout") || lower.includes("failed to connect") || lower.includes("connection")) {
+        hints.push("Use db_ping to diagnose and fix the connection before retrying.");
+      } else if (lower.includes("database") && (lower.includes("does not exist") || lower.includes("unknown"))) {
+        hints.push("The specified database does not exist. Use db_list_databases to see available databases.");
+      } else if (lower.includes("permission") || lower.includes("access denied")) {
+        hints.push("The database user may not have permission to list schemas.");
+      }
+      const hintText = hints.length > 0 ? `\n\nNext steps:\n${hints.map(h => `- ${h}`).join("\n")}` : "";
       return {
-        content: [{ type: "text", text: lines.join("\n") }]
+        content: [{
+          type: "text",
+          text: `Error listing schemas: ${errorMsg}${hintText}`
+        }]
       };
-    } else {
-      const jsonOutput = {
-        schemas: Array.from(schemasMap.entries()).map(([schemaName, tables]) => ({
-          schema_name: schemaName,
-          table_count: tables.length,
-          tables: tables
-        }))
-      };
-      
-      return {
-        content: [{ type: "text", text: JSON.stringify(jsonOutput, null, 2) }],
-        structuredContent: jsonOutput
-      };
+    } finally {
+      await connectionPool.close();
     }
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    const lower = errorMsg.toLowerCase();
-    const hints: string[] = [];
-    if (lower.includes("econnrefused") || lower.includes("etimedout") || lower.includes("failed to connect") || lower.includes("connection")) {
-      hints.push("Use db_ping to diagnose and fix the connection before retrying.");
-    } else if (lower.includes("database") && (lower.includes("does not exist") || lower.includes("unknown"))) {
-      hints.push("The specified database does not exist. Use db_list_databases to see available databases.");
-    } else if (lower.includes("permission") || lower.includes("access denied")) {
-      hints.push("The database user may not have permission to list schemas.");
-    }
-    const hintText = hints.length > 0 ? `\n\nNext steps:\n${hints.map(h => `- ${h}`).join("\n")}` : "";
-    return {
-      content: [{
-        type: "text",
-        text: `Error listing schemas: ${errorMsg}${hintText}`
-      }]
-    };
   } finally {
-    await connectionPool.close();
+    await resolved.cleanup();
   }
+}
+
+/**
+ * Lists all named connections configured in TALK_SQL_CONFIG
+ */
+export async function listConnections(params: ListConnectionsInput): Promise<{ content: Array<{ type: "text"; text: string }>; structuredContent?: { [x: string]: unknown } }> {
+  const connections = getNamedConnections();
+
+  let entries: Array<{ name: string; type: string; has_ssh: boolean }>;
+
+  if (connections && connections.length > 0) {
+    entries = connections.map(c => ({
+      name: c.name,
+      type: detectDatabaseType(c.connectionString),
+      has_ssh: !!c.ssh
+    }));
+  } else {
+    // Legacy mode: check SQL_CONNECTION_STRING
+    const legacyStr = process.env.SQL_CONNECTION_STRING;
+    if (legacyStr && legacyStr.trim().length > 0) {
+      entries = [{
+        name: "default",
+        type: detectDatabaseType(legacyStr),
+        has_ssh: false
+      }];
+    } else {
+      const json = {
+        connections: [],
+        total: 0,
+        note: "No connections configured. Set TALK_SQL_CONFIG to a config file path or SQL_CONNECTION_STRING env var."
+      };
+      return {
+        content: [{ type: "text", text: JSON.stringify(json, null, 2) }],
+        structuredContent: json
+      };
+    }
+  }
+
+  const result = {
+    connections: entries,
+    total: entries.length,
+    note: "Use connection_name parameter in other tools to specify which connection to use."
+  };
+
+  if (params.response_format === ResponseFormat.MARKDOWN) {
+    const lines = ["# Configured Connections\n"];
+    lines.push("| Name | Type | SSH |");
+    lines.push("|------|------|-----|");
+    for (const e of entries) {
+      lines.push(`| ${e.name} | ${e.type} | ${e.has_ssh ? "yes" : "no"} |`);
+    }
+    lines.push(`\n**Total:** ${entries.length}`);
+    lines.push("\nUse `connection_name` parameter in other tools to specify which connection to use.");
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  }
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    structuredContent: result
+  };
 }

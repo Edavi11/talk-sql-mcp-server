@@ -69,3 +69,25 @@ export const WhereClauseSchema = z.string()
 export const ColumnsSchema = z.array(ColumnNameSchema)
   .optional()
   .describe("Array of column names to select (if not provided, selects all columns)");
+
+export const SshConfigSchema = z.object({
+  host: z.string().min(1).max(253).describe("SSH server hostname or IP"),
+  port: z.number().int().min(1).max(65535).default(22).optional().describe("SSH server port (default: 22)"),
+  username: z.string().min(1).max(100).describe("SSH username"),
+  privateKeyPath: z.string().max(500).optional().describe("Path to private key file (e.g. ~/.ssh/id_rsa)"),
+  password: z.string().max(500).optional().describe("SSH password (use instead of privateKeyPath)")
+}).refine(d => d.privateKeyPath || d.password, {
+  message: "SSH requires either privateKeyPath or password"
+});
+
+export const NamedConnectionSchema = z.object({
+  name: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/, "Connection name must only contain letters, numbers, hyphens or underscores"),
+  connectionString: z.string().min(1).max(500),
+  ssh: SshConfigSchema.optional()
+});
+
+export const NamedConnectionsArraySchema = z.array(NamedConnectionSchema).min(1);
+
+export const ConnectionNameSchema = z.string().min(1).max(100)
+  .optional()
+  .describe("Name of a pre-configured connection from the config file (TALK_SQL_CONFIG). Takes priority over connection_string. Use db_list_connections to see available names.");
