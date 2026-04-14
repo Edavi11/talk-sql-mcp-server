@@ -6,7 +6,8 @@ export enum DatabaseType {
   POSTGRESQL = "postgresql",
   MYSQL = "mysql",
   SQLSERVER = "mssql",
-  SQLITE = "sqlite"
+  SQLITE = "sqlite",
+  DB2 = "db2"
 }
 
 export enum ResponseFormat {

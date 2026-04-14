@@ -67,6 +67,8 @@ function getListDatabasesQuery(dbType: DatabaseType): string {
     case DatabaseType.SQLITE:
       // SQLite doesn't have multiple databases concept
       return "SELECT 'main' as name";
+    case DatabaseType.DB2:
+      return "SELECT SCHEMANAME as name FROM SYSCAT.SCHEMATA WHERE SCHEMANAME NOT LIKE 'SYS%' ORDER BY SCHEMANAME";
     default:
       throw new Error(`Unsupported database type: ${dbType}`);
   }
@@ -148,6 +150,29 @@ function getListSchemasQuery(dbType: DatabaseType, database?: string): string {
         FROM sqlite_master
         WHERE type = 'table'
       `;
+    case DatabaseType.DB2:
+      if (database) {
+        return `
+          SELECT
+            TABSCHEMA as schema_name,
+            COUNT(*) as table_count
+          FROM SYSCAT.TABLES
+          WHERE TABSCHEMA = '${database.replace(/'/g, "''")}'
+            AND TYPE = 'T'
+          GROUP BY TABSCHEMA
+          ORDER BY TABSCHEMA
+        `;
+      }
+      return `
+        SELECT
+          TABSCHEMA as schema_name,
+          COUNT(*) as table_count
+        FROM SYSCAT.TABLES
+        WHERE TABSCHEMA NOT LIKE 'SYS%'
+          AND TYPE = 'T'
+        GROUP BY TABSCHEMA
+        ORDER BY TABSCHEMA
+      `;
     default:
       throw new Error(`Unsupported database type: ${dbType}`);
   }
@@ -205,6 +230,19 @@ function getSchemaDetailsQuery(dbType: DatabaseType, schema?: string): string {
         WHERE type = 'table'
         ORDER BY name
       `;
+    case DatabaseType.DB2: {
+      const db2SchemaFilter = schema ? `AND TABSCHEMA = '${schema.replace(/'/g, "''")}'` : "AND TABSCHEMA NOT LIKE 'SYS%'";
+      return `
+        SELECT
+          TABSCHEMA as schema_name,
+          TABNAME as table_name,
+          CASE TYPE WHEN 'T' THEN 'TABLE' WHEN 'V' THEN 'VIEW' ELSE TYPE END as table_type
+        FROM SYSCAT.TABLES
+        WHERE TYPE IN ('T', 'V')
+          ${db2SchemaFilter}
+        ORDER BY TABSCHEMA, TABNAME
+      `;
+    }
     default:
       throw new Error(`Unsupported database type: ${dbType}`);
   }
@@ -273,6 +311,7 @@ function getVersionQuery(dbType: DatabaseType): string {
     case DatabaseType.MYSQL:      return "SELECT VERSION() as version";
     case DatabaseType.SQLSERVER:  return "SELECT @@VERSION as version";
     case DatabaseType.SQLITE:     return "SELECT sqlite_version() as version";
+    case DatabaseType.DB2:        return "SELECT SERVICE_LEVEL as version FROM TABLE(SYSPROC.ENV_GET_INST_INFO()) AS INSTANCEINFO";
     default: return "SELECT 1 as version";
   }
 }
@@ -299,6 +338,14 @@ function getConnectionErrorAdvice(dbType: DatabaseType, error: string): string {
   if (dbType === DatabaseType.SQLSERVER && lower.includes("login")) {
     lines.push("- For SQL Server, ensure the login has been granted access and the instance name is correct.");
     lines.push("- Try adding ?encrypt=false&trustServerCertificate=true to the connection string.");
+  }
+
+  if (dbType === DatabaseType.DB2 && (lower.includes("ibm_db") || lower.includes("odbc") || lower.includes("cli"))) {
+    lines.push("- IBM DB2 requires the ibm_db package. Install it with: npm install ibm_db");
+    lines.push("- The IBM ODBC CLI driver is downloaded automatically during ibm_db installation.");
+  }
+  if (dbType === DatabaseType.DB2) {
+    lines.push("- Default IBM DB2 port is 50000. Connection string format: db2://user:pass@host:50000/DATABASE");
   }
 
   lines.push("- Use db_ping with the corrected connection string before retrying other tools.");

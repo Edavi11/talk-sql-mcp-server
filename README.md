@@ -20,7 +20,7 @@ Supports **PostgreSQL**, **MySQL**, **SQL Server**, and **SQLite** through a uni
 | 🔗 Create foreign key relations | `db_create_relation` |
 | ⚙️ Create triggers | `db_create_trigger` |
 
-**Supports:** PostgreSQL · MySQL · SQL Server · SQLite
+**Supports:** PostgreSQL · MySQL · SQL Server · SQLite · IBM DB2
 
 ---
 
@@ -253,6 +253,14 @@ mssql://user:password@localhost:1433/database?encrypt=false&trustServerCertifica
 ```
 sqlite:///absolute/path/to/database.db
 ```
+
+### 🔵 IBM DB2
+
+```
+db2://user:password@localhost:50000/DATABASE
+```
+
+> **Note:** IBM DB2 support requires the `ibm_db` package (`npm install ibm_db`). It is an optional dependency — the server works without it for all other databases. During installation, `ibm_db` automatically downloads the IBM ODBC CLI driver (~100 MB).
 
 ---
 

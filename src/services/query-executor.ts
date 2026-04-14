@@ -64,7 +64,7 @@ export async function executeQuery(options: ExecuteQueryOptions): Promise<Execut
   if (connectionPool.type === DatabaseType.SQLSERVER && /\bGO\b/i.test(query)) {
     return executeSQLServerBatchScript(connectionPool.pool as sql.ConnectionPool, query);
   }
-  
+
   switch (connectionPool.type) {
     case DatabaseType.POSTGRESQL:
       return executePostgreSQLQuery(connectionPool.pool as pg.Pool, query, params);
@@ -74,6 +74,8 @@ export async function executeQuery(options: ExecuteQueryOptions): Promise<Execut
       return executeSQLServerQuery(connectionPool.pool as sql.ConnectionPool, query, params);
     case DatabaseType.SQLITE:
       return executeSQLiteQuery(connectionPool.pool as BetterSqlite3.Database, query, params);
+    case DatabaseType.DB2:
+      return executeDB2Query(connectionPool.pool, query, params);
     default:
       throw new Error(`Unsupported database type: ${connectionPool.type}`);
   }
@@ -256,6 +258,32 @@ async function executeSQLiteQuery(
     }
   } catch (error) {
     throw new Error(`SQLite query error: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Executes a query on IBM DB2
+ */
+async function executeDB2Query(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  conn: any,
+  query: string,
+  params: unknown[]
+): Promise<ExecuteQueryResult> {
+  try {
+    const rows: unknown[] = await conn.query(query, params.length > 0 ? params : undefined);
+
+    const columns = rows.length > 0 && rows[0] && typeof rows[0] === "object"
+      ? Object.keys(rows[0] as Record<string, unknown>)
+      : [];
+
+    return {
+      rows,
+      rowCount: rows.length,
+      columns
+    };
+  } catch (error) {
+    throw new Error(`IBM DB2 query error: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

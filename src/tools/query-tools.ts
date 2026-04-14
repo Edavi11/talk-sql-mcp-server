@@ -163,9 +163,13 @@ function buildSelectQuery(
 
   const whereClause = where ? ` WHERE ${where}` : "";
 
-  // SQL Server uses OFFSET/FETCH instead of LIMIT/OFFSET
+  // SQL Server and DB2 use OFFSET/FETCH instead of LIMIT/OFFSET
   if (dbType === DatabaseType.SQLSERVER) {
     return `SELECT ${columnList} FROM ${tableName}${whereClause} ORDER BY (SELECT NULL) OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`;
+  }
+
+  if (dbType === DatabaseType.DB2) {
+    return `SELECT ${columnList} FROM ${tableName}${whereClause} ORDER BY (SELECT 1 FROM SYSIBM.SYSDUMMY1) OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`;
   }
 
   return `SELECT ${columnList} FROM ${tableName}${whereClause} LIMIT ${limit} OFFSET ${offset}`;
