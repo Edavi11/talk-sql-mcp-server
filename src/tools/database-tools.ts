@@ -265,43 +265,45 @@ export async function testConnection(params: TestConnectionInput): Promise<{ con
 
   const dbType = detectDatabaseType(resolved.connectionString);
   const startMs = Date.now();
-  let connectionPool;
 
   try {
-    connectionPool = await createConnectionPool(resolved.connectionString);
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    const advice = getConnectionErrorAdvice(dbType, errorMsg);
-    const text = `Connection FAILED (${dbType}): ${errorMsg}\n\n${advice}`;
-    if (params.response_format === ResponseFormat.JSON) {
-      const json = { success: false, database_type: dbType, error: errorMsg, advice };
-      return { content: [{ type: "text", text: JSON.stringify(json, null, 2) }], structuredContent: json };
+    let connectionPool;
+    try {
+      connectionPool = await createConnectionPool(resolved.connectionString);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const advice = getConnectionErrorAdvice(dbType, errorMsg);
+      const text = `Connection FAILED (${dbType}): ${errorMsg}\n\n${advice}`;
+      if (params.response_format === ResponseFormat.JSON) {
+        const json = { success: false, database_type: dbType, error: errorMsg, advice };
+        return { content: [{ type: "text", text: JSON.stringify(json, null, 2) }], structuredContent: json };
+      }
+      return { content: [{ type: "text", text: text }] };
     }
-    return { content: [{ type: "text", text: text }] };
+
+    try {
+      const latencyMs = Date.now() - startMs;
+      const versionQuery = getVersionQuery(dbType);
+      const versionResult = await executeQuery({ connectionPool, query: versionQuery });
+      const version = versionResult.rows.length > 0 && typeof versionResult.rows[0] === "object"
+        ? Object.values(versionResult.rows[0] as Record<string, unknown>)[0]
+        : "unknown";
+
+      if (params.response_format === ResponseFormat.JSON) {
+        const json = { success: true, database_type: dbType, latency_ms: latencyMs, server_version: String(version) };
+        return { content: [{ type: "text", text: JSON.stringify(json, null, 2) }], structuredContent: json };
+      }
+      return {
+        content: [{ type: "text", text: `Connection OK (${dbType})\nLatency: ${latencyMs}ms\nServer version: ${version}` }]
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      return { content: [{ type: "text", text: `Connected but version query failed: ${errorMsg}` }] };
+    } finally {
+      await connectionPool.close();
+    }
   } finally {
     await resolved.cleanup();
-  }
-
-  try {
-    const latencyMs = Date.now() - startMs;
-    const versionQuery = getVersionQuery(dbType);
-    const versionResult = await executeQuery({ connectionPool, query: versionQuery });
-    const version = versionResult.rows.length > 0 && typeof versionResult.rows[0] === "object"
-      ? Object.values(versionResult.rows[0] as Record<string, unknown>)[0]
-      : "unknown";
-
-    if (params.response_format === ResponseFormat.JSON) {
-      const json = { success: true, database_type: dbType, latency_ms: latencyMs, server_version: String(version) };
-      return { content: [{ type: "text", text: JSON.stringify(json, null, 2) }], structuredContent: json };
-    }
-    return {
-      content: [{ type: "text", text: `Connection OK (${dbType})\nLatency: ${latencyMs}ms\nServer version: ${version}` }]
-    };
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    return { content: [{ type: "text", text: `Connected but version query failed: ${errorMsg}` }] };
-  } finally {
-    await connectionPool.close();
   }
 }
 
