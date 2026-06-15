@@ -19,6 +19,7 @@ Supports **PostgreSQL**, **MySQL**, **SQL Server**, and **SQLite** through a uni
 | 🏗️ Create tables | `db_create_table` |
 | 🔗 Create foreign key relations | `db_create_relation` |
 | ⚙️ Create triggers | `db_create_trigger` |
+| 📊 Export ER diagram to a file | `db_export_er_diagram` |
 
 **Supports:** PostgreSQL · MySQL · SQL Server · SQLite · IBM DB2
 
@@ -423,6 +424,46 @@ Creates a database trigger with timing and event control. Syntax is automaticall
 
 ---
 
+### `db_export_er_diagram`
+
+Introspects the full database schema (tables, columns, types, primary keys, and foreign keys) and writes an **Entity-Relationship diagram file** to disk that you can visualize directly in VS Code / Cursor.
+
+Pick the `format` that matches the extension you want to view with:
+
+| Format | File | How to view |
+|---|---|---|
+| `mermaid` | `.md` | Built-in Markdown preview (zero setup) — recommended |
+| `dbml` | `.dbml` | DBML extension or paste into [dbdiagram.io](https://dbdiagram.io) |
+| `json` | `.json` | Raw `{ tables, relations }` graph for programmatic use |
+| `dot` | `.dot` | Graphviz preview extension |
+
+```json
+{
+  "connection_name": "local",
+  "schema": "public",
+  "format": "mermaid",
+  "output_path": "docs/schema",
+  "response_format": "json"
+}
+```
+
+- `output_path` defaults to the **project root** if you pass a bare filename. The correct extension is appended automatically if missing, and parent directories are created as needed.
+- Omit `schema` to export the **entire database**.
+
+Example response:
+```json
+{
+  "success": true,
+  "format": "mermaid",
+  "output_path": "/abs/path/docs/schema.md",
+  "database_type": "postgresql",
+  "tables": 12,
+  "relations": 18
+}
+```
+
+---
+
 ## 🔄 Connection Resolution Priority
 
 When a tool is called, talk-sql resolves the connection in this order:
@@ -470,12 +511,15 @@ src/
 ├── services/
 │   ├── connection-manager.ts   # Connection pooling for all DB types
 │   ├── query-executor.ts       # Query execution and result formatting
-│   └── ssh-tunnel.ts           # SSH tunnel support
+│   ├── ssh-tunnel.ts           # SSH tunnel support
+│   ├── schema-introspection.ts # Engine-agnostic schema graph (tables, columns, FKs)
+│   └── diagram-serializers.ts  # Mermaid / DBML / JSON / DOT serializers
 └── tools/
     ├── database-tools.ts       # db_ping, db_list_databases, db_list_tables, db_list_connections
     ├── query-tools.ts          # db_query, db_select
     ├── ddl-tools.ts            # db_create_table, db_create_relation
-    └── trigger-tools.ts        # db_create_trigger
+    ├── trigger-tools.ts        # db_create_trigger
+    └── diagram-tools.ts        # db_export_er_diagram
 ```
 
 ---

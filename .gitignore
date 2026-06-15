@@ -22,3 +22,5 @@ dist/
 skills-lock.json
 .mcp.json
 coverage/
+.specstory/
+.cursorindexingignore

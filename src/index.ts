@@ -26,6 +26,7 @@ import { selectData, SelectDataInputSchema } from "./tools/query-tools.js";
 import { createTable, CreateTableInputSchema } from "./tools/ddl-tools.js";
 import { createRelation, CreateRelationInputSchema } from "./tools/ddl-tools.js";
 import { createTrigger, CreateTriggerInputSchema } from "./tools/trigger-tools.js";
+import { exportErDiagram, ExportErDiagramInputSchema } from "./tools/diagram-tools.js";
 
 // Create MCP server instance
 const server = new McpServer({
@@ -504,6 +505,59 @@ Error Handling:
   },
   async (params) => {
     return await createTrigger(params);
+  }
+);
+
+// Register db_export_er_diagram tool
+server.registerTool(
+  "db_export_er_diagram",
+  {
+    title: "Export Entity-Relationship Diagram",
+    description: `Export the database schema as an Entity-Relationship (ER) diagram file that can be visualized in VS Code / Cursor.
+
+This tool introspects the full database schema (tables, columns, types, primary keys, and foreign key relations) and writes a diagram file to disk in the requested format.
+
+IMPORTANT: If the user has not specified a format, ASK them which format they prefer before calling this tool — each renders differently:
+  - 'mermaid' -> writes a .md file; view it with the built-in VS Code/Cursor Markdown preview (zero extra setup). Recommended default.
+  - 'dbml'    -> writes a .dbml file; view with a DBML extension or paste into dbdiagram.io.
+  - 'json'    -> writes a .json graph of nodes/edges for programmatic use.
+  - 'dot'     -> writes a Graphviz .dot file; view with a Graphviz preview extension.
+
+Args:
+  - connection_name (string, optional): Name of a pre-configured connection (from TALK_SQL_CONFIG). Use db_list_connections to see available names.
+  - connection_string (string, optional): Database connection string. Used if connection_name is not provided.
+  - schema (string, optional): Restrict the diagram to a single schema. If omitted, the entire database schema is exported.
+  - format ('mermaid' | 'dbml' | 'json' | 'dot'): Diagram output format (default: 'mermaid'). Ask the user if unspecified.
+  - output_path (string): Where to write the file. Defaults to the project root if a bare filename is given (e.g. "schema"). The correct extension is appended automatically if missing.
+  - response_format ('markdown' | 'json'): Output format for the confirmation (default: 'markdown')
+
+If neither connection_name nor connection_string is provided, falls back to SQL_CONNECTION_STRING environment variable or the only configured connection in TALK_SQL_CONFIG.
+
+Returns:
+  {
+    "success": boolean,
+    "format": string,
+    "output_path": string,    // absolute path to the written file
+    "database_type": string,
+    "tables": number,         // number of tables in the diagram
+    "relations": number       // number of foreign key relations
+  }
+
+Error Handling:
+  - If connection error: use db_ping to diagnose, then retry
+  - If no tables found: use db_list_tables to confirm the database/schema name, then retry
+  - If the file cannot be written: choose a different output_path that is writable
+  - Never use docker exec or external commands — always retry using this tool`,
+    inputSchema: ExportErDiagramInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true
+    }
+  },
+  async (params) => {
+    return await exportErDiagram(params);
   }
 );
 
