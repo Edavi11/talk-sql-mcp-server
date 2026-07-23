@@ -22,11 +22,15 @@ export interface ConnectionPool {
  */
 export function detectDatabaseType(connectionString: string): DatabaseType {
   const lower = connectionString.toLowerCase().trim();
-  
+
+  if (lower.startsWith("cockroachdb://")) {
+    return DatabaseType.COCKROACHDB;
+  }
+
   if (lower.startsWith("postgresql://") || lower.startsWith("postgres://")) {
     return DatabaseType.POSTGRESQL;
   }
-  
+
   if (lower.startsWith("mysql://") || lower.startsWith("mysql2://")) {
     return DatabaseType.MYSQL;
   }
@@ -48,30 +52,40 @@ export function detectDatabaseType(connectionString: string): DatabaseType {
     return DatabaseType.SQLITE;
   }
 
-  throw new Error(`Unsupported database type. Connection string must start with: postgresql://, mysql://, mssql://, sqlite://, or db2://`);
+  throw new Error(`Unsupported database type. Connection string must start with: postgresql://, cockroachdb://, mysql://, mssql://, sqlite://, or db2://`);
 }
 
 /**
- * Creates a connection pool for PostgreSQL
+ * Creates a connection pool for PostgreSQL or CockroachDB.
+ * CockroachDB speaks the PostgreSQL wire protocol, so the `pg` driver works
+ * against it unmodified - only the reported `type` differs.
  */
-async function createPostgreSQLPool(connectionString: string): Promise<ConnectionPool> {
+async function createPostgreSQLPool(connectionString: string, dbType: DatabaseType.POSTGRESQL | DatabaseType.COCKROACHDB): Promise<ConnectionPool> {
+  // CockroachDB connection strings use a cockroachdb:// scheme that the pg
+  // driver doesn't recognize - rewrite to postgresql:// before connecting.
+  const pgConnectionString = dbType === DatabaseType.COCKROACHDB
+    ? connectionString.replace(/^cockroachdb:\/\//i, "postgresql://")
+    : connectionString;
+
   const pool = new PgPool({
-    connectionString,
+    connectionString: pgConnectionString,
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
   });
-  
+
+  const label = dbType === DatabaseType.COCKROACHDB ? "CockroachDB" : "PostgreSQL";
+
   // Test connection
   try {
     await pool.query("SELECT 1");
   } catch (error) {
     await pool.end();
-    throw new Error(`Failed to connect to PostgreSQL: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Failed to connect to ${label}: ${error instanceof Error ? error.message : String(error)}`);
   }
-  
+
   return {
-    type: DatabaseType.POSTGRESQL,
+    type: dbType,
     pool,
     close: async () => {
       await pool.end();
@@ -244,7 +258,8 @@ export async function createConnectionPool(connectionString: string): Promise<Co
 
   switch (dbType) {
     case DatabaseType.POSTGRESQL:
-      return createPostgreSQLPool(connectionString);
+    case DatabaseType.COCKROACHDB:
+      return createPostgreSQLPool(connectionString, dbType);
     case DatabaseType.MYSQL:
       return createMySQLPool(connectionString);
     case DatabaseType.SQLSERVER:

@@ -65,6 +65,19 @@ describe("withGate - dynamic-sql (db_query)", () => {
     expect(handler).toHaveBeenCalledTimes(2);
   });
 
+  it("EXPLAIN/ANALYZE always pass through, readonly on or off, without needing confirm", async () => {
+    const handler = vi.fn<() => Promise<StubResult>>().mockResolvedValue({ content: [{ type: "text", text: "plan" }] });
+    const gated = withGate("db_query", { kind: "dynamic-sql" }, handler);
+
+    process.env.TALK_SQL_READONLY = "true";
+    await gated({ query: "EXPLAIN SELECT * FROM users", connection_string: "postgresql://u:p@h/db" });
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    delete process.env.TALK_SQL_READONLY;
+    await gated({ query: "ANALYZE users", confirm: false, connection_string: "postgresql://u:p@h/db" });
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
   it("blocks INSERT when read-only mode is on", async () => {
     process.env.TALK_SQL_READONLY = "true";
     const handler = vi.fn<() => Promise<StubResult>>();

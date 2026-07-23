@@ -83,6 +83,48 @@ describe("createTrigger", () => {
     expect(parsed.query).toContain("CREATE TRIGGER");
   });
 
+  it("creates a CockroachDB trigger (multi-statement, dedicated dialect case)", async () => {
+    vi.mocked(createConnectionPool).mockResolvedValue(mockPool(DatabaseType.COCKROACHDB));
+    vi.mocked(executeQuery).mockResolvedValue({ rows: [], rowCount: 0, columns: [] });
+
+    const result = await createTrigger({
+      ...base,
+      connection_string: "cockroachdb://u:p@h/db",
+      response_format: "json",
+    });
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.query).toContain("CREATE OR REPLACE FUNCTION");
+    expect(parsed.query).toContain("CREATE TRIGGER");
+  });
+
+  it("does not corrupt a multi-statement procedure body when splitting on semicolons", async () => {
+    vi.mocked(createConnectionPool).mockResolvedValue(mockPool(DatabaseType.POSTGRESQL));
+    const executedQueries: string[] = [];
+    vi.mocked(executeQuery).mockImplementation(async ({ query }) => {
+      executedQueries.push(query);
+      return { rows: [], rowCount: 0, columns: [] };
+    });
+
+    await createTrigger({
+      ...base,
+      procedure: "NEW.updated_at = NOW(); NEW.version = NEW.version + 1;",
+      connection_string: "postgresql://u:p@h/db",
+      response_format: "json",
+    });
+
+    // Exactly 2 top-level statements: CREATE FUNCTION...$$...$$ and CREATE TRIGGER
+    expect(executedQueries).toHaveLength(2);
+    expect(executedQueries[0]).toContain("CREATE OR REPLACE FUNCTION");
+    // The procedure's internal semicolons must survive intact inside the function body
+    expect(executedQueries[0]).toContain("NEW.updated_at = NOW();");
+    expect(executedQueries[0]).toContain("NEW.version = NEW.version + 1;");
+    expect(executedQueries[0]).toContain("$$ LANGUAGE plpgsql");
+    expect(executedQueries[1]).toContain("CREATE TRIGGER");
+    expect(executedQueries[1]).not.toContain("CREATE OR REPLACE FUNCTION");
+  });
+
   it("creates a SQL Server trigger with BEFORE -> INSTEAD OF", async () => {
     vi.mocked(createConnectionPool).mockResolvedValue(mockPool(DatabaseType.SQLSERVER));
     vi.mocked(executeQuery).mockResolvedValue({ rows: [], rowCount: 0, columns: [] });

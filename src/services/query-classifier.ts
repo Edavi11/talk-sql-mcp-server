@@ -11,16 +11,24 @@ const { Parser } = pkg;
 const parser = new Parser();
 
 export type QueryClassification = {
-  type: "SELECT" | "DML" | "DDL" | "OTHER";
+  type: "SELECT" | "EXPLAIN" | "DML" | "DDL" | "OTHER";
   isDestructive: boolean;
   hasWhere: boolean;
   tables: string[];
   parseError?: string;
 };
 
+// EXPLAIN/ANALYZE are diagnostic statements that return rows (a query plan or
+// analysis report) but node-sql-parser cannot reliably parse them in any
+// dialect: it throws for PostgreSQL/SQLite/DB2, and misparses SQL Server's
+// EXPLAIN as a variable assignment. Detect them up front via the leading
+// keyword instead of relying on the AST.
+const EXPLAIN_ANALYZE_PREFIX = /^\s*(EXPLAIN\b|ANALYZE\b)/i;
+
 function mapDialect(dbType: DatabaseType): string {
   switch (dbType) {
     case DatabaseType.POSTGRESQL: return "PostgresQL";
+    case DatabaseType.COCKROACHDB: return "PostgresQL"; // node-sql-parser has no CockroachDB dialect; CRDB's grammar is Postgres-derived
     case DatabaseType.MYSQL: return "MySQL";
     case DatabaseType.SQLSERVER: return "TransactSQL";
     case DatabaseType.SQLITE: return "Sqlite";
@@ -74,6 +82,10 @@ function classifyWithRegexFallback(sql: string, parseErrorMsg: string): QueryCla
 }
 
 export function classifyQuery(sql: string, dbType: DatabaseType): QueryClassification {
+  if (EXPLAIN_ANALYZE_PREFIX.test(sql)) {
+    return { type: "EXPLAIN", isDestructive: false, hasWhere: false, tables: [] };
+  }
+
   try {
     const ast = parser.astify(sql, { database: mapDialect(dbType) });
     const statements = Array.isArray(ast) ? ast : [ast];

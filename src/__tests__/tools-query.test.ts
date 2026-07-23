@@ -75,6 +75,45 @@ describe("executeSQL", () => {
     expect(result.structuredContent).toBeDefined();
   });
 
+  it("returns query plan rows for EXPLAIN (not the DML/DDL rowCount message)", async () => {
+    vi.mocked(createConnectionPool).mockResolvedValue(mockPool());
+    vi.mocked(executeQuery).mockResolvedValue({
+      rows: [{ "QUERY PLAN": "Seq Scan on users  (cost=0.00..1.05 rows=5 width=36)" }],
+      rowCount: 1,
+      columns: ["QUERY PLAN"],
+    });
+
+    const result = await executeSQL({
+      connection_string: "postgresql://u:p@h/db",
+      query: "EXPLAIN SELECT * FROM users",
+      confirm: false,
+      response_format: "markdown",
+    });
+
+    expect(result.content[0].text).toContain("Query Results");
+    expect(result.content[0].text).toContain("Seq Scan on users");
+    expect(result.content[0].text).not.toContain("Rows affected");
+  });
+
+  it("returns analysis rows for ANALYZE without requiring confirm", async () => {
+    vi.mocked(createConnectionPool).mockResolvedValue(mockPool());
+    vi.mocked(executeQuery).mockResolvedValue({
+      rows: [{ Table: "users", Op: "analyze", Msg_type: "status", Msg_text: "OK" }],
+      rowCount: 1,
+      columns: ["Table", "Op", "Msg_type", "Msg_text"],
+    });
+
+    const result = await executeSQL({
+      connection_string: "mysql://u:p@h/db",
+      query: "ANALYZE TABLE users",
+      confirm: false,
+      response_format: "markdown",
+    });
+
+    expect(result.content[0].text).toContain("Query Results");
+    expect(result.content[0].text).toContain("analyze");
+  });
+
   it("returns markdown for DML query", async () => {
     vi.mocked(createConnectionPool).mockResolvedValue(mockPool());
     vi.mocked(executeQuery).mockResolvedValue({ rows: [], rowCount: 3, columns: [] });

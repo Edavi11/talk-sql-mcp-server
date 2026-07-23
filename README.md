@@ -2,7 +2,7 @@
 
 **talk-sql** is a **Model Context Protocol (MCP)** server that gives AI assistants (Cursor, Claude, Copilot, etc.) full, native SQL database access — without resorting to Docker commands or shell workarounds.
 
-Supports **PostgreSQL**, **MySQL**, **SQL Server**, and **SQLite** through a unified set of tools.
+Supports **PostgreSQL**, **CockroachDB**, **MySQL**, **SQL Server**, and **SQLite** through a unified set of tools.
 
 ---
 
@@ -21,7 +21,7 @@ Supports **PostgreSQL**, **MySQL**, **SQL Server**, and **SQLite** through a uni
 | ⚙️ Create triggers | `db_create_trigger` |
 | 📊 Export ER diagram to a file | `db_export_er_diagram` |
 
-**Supports:** PostgreSQL · MySQL · SQL Server · SQLite · IBM DB2
+**Supports:** PostgreSQL · CockroachDB · MySQL · SQL Server · SQLite · IBM DB2
 
 ---
 
@@ -232,6 +232,18 @@ Then use `"command": "talk-sql"` instead of `"command": "npx"` in your client co
 postgresql://user:password@localhost:5432/database
 ```
 
+### 🪳 CockroachDB
+
+```
+cockroachdb://user:password@localhost:26257/database?sslmode=disable
+```
+
+CockroachDB speaks the PostgreSQL wire protocol, so it reuses the same connection pooling, query execution, and schema introspection logic as PostgreSQL — just with its own `cockroachdb://` connection string prefix.
+
+> **Note:** `db_create_trigger` requires CockroachDB **v24.1 or later** — `CREATE TRIGGER`/`CREATE FUNCTION` are not supported in earlier versions and the query will fail with `type "trigger" does not exist`.
+>
+> **Known CockroachDB limitation:** as of v24.3, a trigger function that reads a `NEW.<column>` value it already assigned earlier in the same function body (e.g. `NEW.col := 'a'; NEW.col := NEW.col || 'b';`) fails at `CREATE TRIGGER` time with `no data source matches prefix: new in this context`. This is a CockroachDB PL/pgSQL limitation, not a talk-sql bug — write trigger bodies that assign each `NEW` column at most once, or compute intermediate values in a local variable first.
+
 ### 🐬 MySQL
 
 ```
@@ -332,7 +344,7 @@ Returns all schemas and their tables in a database.
 
 ### `db_query`
 
-Executes any SQL statement — SELECT, INSERT, UPDATE, DELETE, DDL, or SQL Server batch scripts (with `GO` separators).
+Executes any SQL statement — SELECT, INSERT, UPDATE, DELETE, DDL, `EXPLAIN`/`ANALYZE`, or SQL Server batch scripts (with `GO` separators). `EXPLAIN` and `ANALYZE` results (query plans, analysis reports) are returned as rows, the same as a SELECT.
 
 ```json
 {

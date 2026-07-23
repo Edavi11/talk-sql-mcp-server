@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { classifyQuery, validateWhereFragment } from "../services/query-classifier.js";
 import { DatabaseType } from "../types.js";
 
-const dialects = [DatabaseType.POSTGRESQL, DatabaseType.MYSQL, DatabaseType.SQLSERVER];
+const dialects = [DatabaseType.POSTGRESQL, DatabaseType.COCKROACHDB, DatabaseType.MYSQL, DatabaseType.SQLSERVER];
 
 describe("classifyQuery", () => {
   for (const dbType of dialects) {
@@ -81,6 +81,51 @@ describe("classifyQuery", () => {
     const c = classifyQuery("DROP TABLE $$$invalid$$$", DatabaseType.POSTGRESQL);
     expect(c.parseError).toBeDefined();
     expect(c.isDestructive).toBe(true);
+  });
+
+  describe("EXPLAIN/ANALYZE (node-sql-parser can't parse these in any dialect)", () => {
+    const allDialects = [DatabaseType.POSTGRESQL, DatabaseType.COCKROACHDB, DatabaseType.MYSQL, DatabaseType.SQLSERVER, DatabaseType.SQLITE, DatabaseType.DB2];
+
+    for (const dbType of allDialects) {
+      it(`classifies EXPLAIN as non-destructive EXPLAIN type (${dbType})`, () => {
+        const c = classifyQuery("EXPLAIN SELECT * FROM users", dbType);
+        expect(c.type).toBe("EXPLAIN");
+        expect(c.isDestructive).toBe(false);
+        expect(c.parseError).toBeUndefined();
+      });
+
+      it(`classifies ANALYZE as non-destructive EXPLAIN type (${dbType})`, () => {
+        const c = classifyQuery("ANALYZE users", dbType);
+        expect(c.type).toBe("EXPLAIN");
+        expect(c.isDestructive).toBe(false);
+      });
+    }
+
+    it("classifies EXPLAIN ANALYZE (Postgres combined form)", () => {
+      const c = classifyQuery("EXPLAIN ANALYZE SELECT * FROM users", DatabaseType.POSTGRESQL);
+      expect(c.type).toBe("EXPLAIN");
+    });
+
+    it("classifies EXPLAIN QUERY PLAN (SQLite form)", () => {
+      const c = classifyQuery("EXPLAIN QUERY PLAN SELECT * FROM users", DatabaseType.SQLITE);
+      expect(c.type).toBe("EXPLAIN");
+    });
+
+    it("classifies ANALYZE TABLE (MySQL form)", () => {
+      const c = classifyQuery("ANALYZE TABLE users", DatabaseType.MYSQL);
+      expect(c.type).toBe("EXPLAIN");
+    });
+
+    it("is case-insensitive and tolerates leading whitespace", () => {
+      expect(classifyQuery("  explain select 1", DatabaseType.POSTGRESQL).type).toBe("EXPLAIN");
+      expect(classifyQuery("Explain Select 1", DatabaseType.MYSQL).type).toBe("EXPLAIN");
+    });
+
+    it("never requires confirmation, even without WHERE", () => {
+      const c = classifyQuery("ANALYZE users", DatabaseType.POSTGRESQL);
+      expect(c.isDestructive).toBe(false);
+      expect(c.hasWhere).toBe(false);
+    });
   });
 });
 

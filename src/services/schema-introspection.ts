@@ -50,7 +50,8 @@ function sqlLiteral(value: string): string {
  */
 function getColumnsQuery(dbType: DatabaseType, schema?: string): string {
   switch (dbType) {
-    case DatabaseType.POSTGRESQL: {
+    case DatabaseType.POSTGRESQL:
+    case DatabaseType.COCKROACHDB: {
       const filter = schema ? `AND c.table_schema = '${sqlLiteral(schema)}'` : "";
       return `
         SELECT
@@ -154,7 +155,8 @@ function getColumnsQuery(dbType: DatabaseType, schema?: string): string {
  */
 function getForeignKeysQuery(dbType: DatabaseType, schema?: string): string {
   switch (dbType) {
-    case DatabaseType.POSTGRESQL: {
+    case DatabaseType.POSTGRESQL:
+    case DatabaseType.COCKROACHDB: {
       const filter = schema ? `AND tc.table_schema = '${sqlLiteral(schema)}'` : "";
       return `
         SELECT

@@ -79,7 +79,7 @@ export function withGate<TParams, TResult>(
     const dbType = resolveDbTypeForClassification(dynParams.connection_string);
     const classification = classifyQuery(dynParams.query, dbType);
 
-    if (isReadOnlyMode() && classification.type !== "SELECT") {
+    if (isReadOnlyMode() && classification.type !== "SELECT" && classification.type !== "EXPLAIN") {
       return readOnlyBlockedMessage(toolName);
     }
 

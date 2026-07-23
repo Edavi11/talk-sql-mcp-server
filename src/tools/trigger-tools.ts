@@ -61,6 +61,26 @@ CREATE TRIGGER ${safeTriggerName}
   EXECUTE FUNCTION ${safeSchema ? `${safeSchema}.` : ""}${safeTriggerName}_func();
       `.trim();
 
+    case DatabaseType.COCKROACHDB:
+      // CockroachDB (24.1+) supports CREATE FUNCTION/CREATE TRIGGER with a
+      // restricted PL/pgSQL subset. Kept as its own case (not a Postgres
+      // fallthrough) since CRDB's trigger support is newer/more limited and
+      // may need to diverge from the Postgres SQL as gaps are found.
+      return `
+CREATE OR REPLACE FUNCTION ${safeSchema ? `${safeSchema}.` : ""}${safeTriggerName}_func()
+RETURNS TRIGGER AS $$
+BEGIN
+  ${procedure}
+  RETURN ${timing === "BEFORE" ? "NEW" : event === "DELETE" ? "OLD" : "NEW"};
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER ${safeTriggerName}
+  ${timing} ${event} ON ${tableName}
+  FOR EACH ROW
+  EXECUTE FUNCTION ${safeSchema ? `${safeSchema}.` : ""}${safeTriggerName}_func();
+      `.trim();
+
     case DatabaseType.MYSQL:
       return `
 CREATE TRIGGER ${safeTriggerName}
@@ -98,6 +118,38 @@ END;
 }
 
 /**
+ * Splits SQL into top-level statements on semicolons, treating any text
+ * between a pair of `$$` markers (Postgres/CockroachDB dollar-quoted function
+ * bodies) as opaque - semicolons inside a `$$ ... $$` block never split.
+ */
+function splitTopLevelStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = "";
+  let inDollarQuote = false;
+
+  for (let i = 0; i < sql.length; i++) {
+    if (sql[i] === "$" && sql[i + 1] === "$") {
+      inDollarQuote = !inDollarQuote;
+      current += "$$";
+      i++;
+      continue;
+    }
+
+    if (sql[i] === ";" && !inDollarQuote) {
+      current += ";";
+      if (current.trim()) statements.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += sql[i];
+  }
+
+  if (current.trim()) statements.push(current.trim());
+  return statements;
+}
+
+/**
  * Creates a trigger
  */
 export async function createTrigger(params: CreateTriggerInput): Promise<{ content: Array<{ type: "text"; text: string }>; structuredContent?: { [x: string]: unknown } }> {
@@ -118,16 +170,15 @@ export async function createTrigger(params: CreateTriggerInput): Promise<{ conte
       params.procedure
     );
 
-    // Execute query (may be multiple statements for PostgreSQL)
-    const statements = query.split(";").filter(s => s.trim().length > 0);
-
+    // Execute the generated SQL. For Postgres/CockroachDB this is two
+    // top-level statements (CREATE FUNCTION ... $$...$$ then CREATE TRIGGER);
+    // for MySQL/SQL Server/SQLite it's a single CREATE TRIGGER ... BEGIN...END
+    // statement. In both cases the user-supplied `procedure` body may itself
+    // contain semicolons, so a naive split(";") would corrupt it - split only
+    // on top-level semicolons that fall outside $$ ... $$ dollar-quoted blocks.
+    const statements = splitTopLevelStatements(query).filter(s => s.trim());
     for (const statement of statements) {
-      if (statement.trim()) {
-        await executeQuery({
-          connectionPool,
-          query: statement.trim() + (dbType === DatabaseType.POSTGRESQL && statement.includes("CREATE FUNCTION") ? "" : ";")
-        });
-      }
+      await executeQuery({ connectionPool, query: statement });
     }
 
     const tableName = params.schema ? `${params.schema}.${params.table}` : params.table;

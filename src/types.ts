@@ -7,7 +7,8 @@ export enum DatabaseType {
   MYSQL = "mysql",
   SQLSERVER = "mssql",
   SQLITE = "sqlite",
-  DB2 = "db2"
+  DB2 = "db2",
+  COCKROACHDB = "cockroachdb"
 }
 
 export enum ResponseFormat {

@@ -67,6 +67,7 @@ export async function executeQuery(options: ExecuteQueryOptions): Promise<Execut
 
   switch (connectionPool.type) {
     case DatabaseType.POSTGRESQL:
+    case DatabaseType.COCKROACHDB:
       return executePostgreSQLQuery(connectionPool.pool as pg.Pool, query, params);
     case DatabaseType.MYSQL:
       return executeMySQLQuery(connectionPool.pool as mysql.Pool, query, params);
@@ -227,11 +228,13 @@ async function executeSQLiteQuery(
 ): Promise<ExecuteQueryResult> {
   try {
     const stmt = db.prepare(query);
-    
-    // Determine if this is a SELECT query
+
+    // Determine if this statement returns rows. EXPLAIN/EXPLAIN QUERY PLAN
+    // return rows via .all(); ANALYZE does not (SQLite only supports .run()
+    // for it) even though it's also a diagnostic statement.
     const trimmedQuery = query.trim().toUpperCase();
-    const isSelect = trimmedQuery.startsWith("SELECT");
-    
+    const isSelect = trimmedQuery.startsWith("SELECT") || trimmedQuery.startsWith("EXPLAIN");
+
     if (isSelect) {
       const rows = stmt.all(...params) as unknown[];
       

@@ -59,6 +59,7 @@ export type ListConnectionsInput = z.infer<typeof ListConnectionsInputSchema>;
 function getListDatabasesQuery(dbType: DatabaseType): string {
   switch (dbType) {
     case DatabaseType.POSTGRESQL:
+    case DatabaseType.COCKROACHDB:
       return "SELECT datname as name FROM pg_database WHERE datistemplate = false ORDER BY datname";
     case DatabaseType.MYSQL:
       return "SHOW DATABASES";
@@ -80,26 +81,27 @@ function getListDatabasesQuery(dbType: DatabaseType): string {
 function getListSchemasQuery(dbType: DatabaseType, database?: string): string {
   switch (dbType) {
     case DatabaseType.POSTGRESQL:
+    case DatabaseType.COCKROACHDB:
       if (database) {
         // Connect to specific database and list schemas
         return `
           SELECT
-            schema_name as schema_name,
+            table_schema as schema_name,
             COUNT(table_name) as table_count
           FROM information_schema.tables
           WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-          GROUP BY schema_name
-          ORDER BY schema_name
+          GROUP BY table_schema
+          ORDER BY table_schema
         `;
       }
       return `
         SELECT
-          schema_name as schema_name,
+          table_schema as schema_name,
           COUNT(table_name) as table_count
         FROM information_schema.tables
         WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-        GROUP BY schema_name
-        ORDER BY schema_name
+        GROUP BY table_schema
+        ORDER BY table_schema
       `;
     case DatabaseType.MYSQL:
       if (database) {
@@ -186,6 +188,7 @@ function getSchemaDetailsQuery(dbType: DatabaseType, schema?: string): string {
 
   switch (dbType) {
     case DatabaseType.POSTGRESQL:
+    case DatabaseType.COCKROACHDB:
       return `
         SELECT
           table_schema as schema_name,
@@ -309,7 +312,8 @@ export async function testConnection(params: TestConnectionInput): Promise<{ con
 
 function getVersionQuery(dbType: DatabaseType): string {
   switch (dbType) {
-    case DatabaseType.POSTGRESQL: return "SELECT version() as version";
+    case DatabaseType.POSTGRESQL:
+    case DatabaseType.COCKROACHDB: return "SELECT version() as version";
     case DatabaseType.MYSQL:      return "SELECT VERSION() as version";
     case DatabaseType.SQLSERVER:  return "SELECT @@VERSION as version";
     case DatabaseType.SQLITE:     return "SELECT sqlite_version() as version";
@@ -328,6 +332,7 @@ function getConnectionErrorAdvice(dbType: DatabaseType, error: string): string {
   if (lower.includes("econnrefused") || lower.includes("connect etimedout") || lower.includes("could not connect")) {
     lines.push("- The server is not reachable. Check that the host/port are correct and the server is running.");
     if (dbType === DatabaseType.POSTGRESQL) lines.push("- Default PostgreSQL port is 5432.");
+    if (dbType === DatabaseType.COCKROACHDB) lines.push("- Default CockroachDB SQL port is 26257.");
     if (dbType === DatabaseType.MYSQL)      lines.push("- Default MySQL port is 3306.");
     if (dbType === DatabaseType.SQLSERVER)  lines.push("- Default SQL Server port is 1433.");
   }

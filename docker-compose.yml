@@ -55,3 +55,15 @@ services:
       timeout: 20s
       retries: 20
       start_period: 180s
+
+  cockroachdb:
+    # v24.1+ required for CREATE TRIGGER/CREATE FUNCTION support (db_create_trigger)
+    image: cockroachdb/cockroach:latest-v24.3
+    command: start-single-node --insecure
+    ports: ["26258:26257", "8081:8080"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health?ready=1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 15s

@@ -72,6 +72,7 @@ function mapColumnType(dbType: DatabaseType, type: string, autoIncrement?: boole
   if (autoIncrement) {
     switch (dbType) {
       case DatabaseType.POSTGRESQL:
+      case DatabaseType.COCKROACHDB:
         if (upperType.includes("INT")) return "SERIAL";
         break;
       case DatabaseType.MYSQL:

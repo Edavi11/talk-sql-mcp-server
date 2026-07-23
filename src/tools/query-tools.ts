@@ -61,8 +61,9 @@ export async function executeSQL(params: ExecuteSQLInput): Promise<{ content: Ar
       query: params.query
     });
 
-    // Check if query was a SELECT (has rows) or DML/DDL (has rowCount)
-    const isSelectQuery = classifyQuery(params.query, dbType).type === "SELECT";
+    // Check if query returns rows (SELECT, EXPLAIN, ANALYZE) or is DML/DDL (has rowCount only)
+    const classificationType = classifyQuery(params.query, dbType).type;
+    const isSelectQuery = classificationType === "SELECT" || classificationType === "EXPLAIN";
 
     if (isSelectQuery) {
       // Format SELECT results

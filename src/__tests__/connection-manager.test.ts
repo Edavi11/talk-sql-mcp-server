@@ -11,6 +11,10 @@ describe("detectDatabaseType", () => {
     expect(detectDatabaseType("postgres://user:pass@localhost/db")).toBe(DatabaseType.POSTGRESQL);
   });
 
+  it("detects CockroachDB from cockroachdb://", () => {
+    expect(detectDatabaseType("cockroachdb://user:pass@localhost:26257/db")).toBe(DatabaseType.COCKROACHDB);
+  });
+
   it("detects MySQL from mysql://", () => {
     expect(detectDatabaseType("mysql://user:pass@localhost:3306/db")).toBe(DatabaseType.MYSQL);
   });

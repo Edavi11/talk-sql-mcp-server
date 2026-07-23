@@ -7,6 +7,7 @@ export const CONN = {
   mysql: process.env.TALK_SQL_TEST_MYSQL ?? "mysql://talksql:talksql_test_pw@localhost:53306/talksql_test",
   mssql: process.env.TALK_SQL_TEST_MSSQL ?? "mssql://sa:TalkSql_Test_Pw1@localhost:51433/master?encrypt=false&trustServerCertificate=true",
   db2: process.env.TALK_SQL_TEST_DB2 ?? "db2://db2inst1:talksql_test_pw@localhost:50000/TALKSQL",
+  cockroachdb: process.env.TALK_SQL_TEST_CRDB ?? "cockroachdb://root@localhost:26258/defaultdb?sslmode=disable",
 };
 
 export function newSqliteConnectionString(): string {

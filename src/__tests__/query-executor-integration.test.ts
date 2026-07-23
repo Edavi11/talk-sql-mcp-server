@@ -295,6 +295,44 @@ describe("executeQuery - SQLite", () => {
       query: "SELECT * FROM users",
     })).rejects.toThrow("SQLite query error");
   });
+
+  it("calls .all() (not .run()) for EXPLAIN, returning plan rows", async () => {
+    sqliteAll.mockReturnValue([{ addr: 0, opcode: "Init" }]);
+
+    const result = await executeQuery({
+      connectionPool: makePool(DatabaseType.SQLITE, sqliteDb),
+      query: "EXPLAIN SELECT * FROM users",
+    });
+
+    expect(sqliteAll).toHaveBeenCalled();
+    expect(sqliteRun).not.toHaveBeenCalled();
+    expect(result.rows).toEqual([{ addr: 0, opcode: "Init" }]);
+  });
+
+  it("calls .all() for EXPLAIN QUERY PLAN, returning plan rows", async () => {
+    sqliteAll.mockReturnValue([{ id: 2, parent: 0, notused: 0, detail: "SCAN users" }]);
+
+    const result = await executeQuery({
+      connectionPool: makePool(DatabaseType.SQLITE, sqliteDb),
+      query: "EXPLAIN QUERY PLAN SELECT * FROM users",
+    });
+
+    expect(sqliteAll).toHaveBeenCalled();
+    expect(result.rows).toEqual([{ id: 2, parent: 0, notused: 0, detail: "SCAN users" }]);
+  });
+
+  it("calls .run() (not .all()) for ANALYZE, since SQLite does not return rows for it", async () => {
+    sqliteRun.mockReturnValue({ changes: 0 });
+
+    const result = await executeQuery({
+      connectionPool: makePool(DatabaseType.SQLITE, sqliteDb),
+      query: "ANALYZE users",
+    });
+
+    expect(sqliteRun).toHaveBeenCalled();
+    expect(sqliteAll).not.toHaveBeenCalled();
+    expect(result.rows).toEqual([]);
+  });
 });
 
 // ─── Unsupported DB type ──────────────────────────────────────────────────────
