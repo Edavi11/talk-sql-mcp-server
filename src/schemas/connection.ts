@@ -59,12 +59,8 @@ export const OffsetSchema = z.number()
 
 export const WhereClauseSchema = z.string()
   .max(1000, "WHERE clause is too long")
-  .refine(
-    (val) => !/(--|\/\*|\*\/|;\s*(drop|delete|truncate|insert|update|alter|create|exec|execute|xp_)\s)/i.test(val),
-    "WHERE clause contains potentially dangerous SQL patterns"
-  )
   .optional()
-  .describe("SQL WHERE clause (without the WHERE keyword, e.g., 'age > 18')");
+  .describe("SQL WHERE clause (without the WHERE keyword, e.g., 'age > 18'). Validated via SQL parsing - must be a single boolean expression referencing only the target table.");
 
 export const ColumnsSchema = z.array(ColumnNameSchema)
   .optional()

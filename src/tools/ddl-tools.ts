@@ -5,10 +5,10 @@
 
 import { z } from "zod";
 import { DatabaseType, ResponseFormat, ColumnDefinition, ForeignKeyDefinition } from "../types.js";
-import { createConnectionPool, detectDatabaseType, sanitizeIdentifier } from "../services/connection-manager.js";
+import { detectDatabaseType, sanitizeIdentifier } from "../services/connection-manager.js";
 import { executeQuery } from "../services/query-executor.js";
 import { ConnectionStringSchema, ConnectionNameSchema, ResponseFormatSchema, TableNameSchema, SchemaNameSchema } from "../schemas/connection.js";
-import { resolveConnection } from "../constants.js";
+import { getOrCreateResolvedPool } from "../services/pool-cache.js";
 
 /**
  * Schema for column definition
@@ -143,55 +143,47 @@ function buildCreateTableQuery(
  * Creates a table
  */
 export async function createTable(params: CreateTableInput): Promise<{ content: Array<{ type: "text"; text: string }>; structuredContent?: { [x: string]: unknown } }> {
-  const resolved = await resolveConnection({
+  const { pool: connectionPool, connectionString } = await getOrCreateResolvedPool({
     connection_string: params.connection_string,
     connection_name: params.connection_name
   });
 
   try {
-    const connectionPool = await createConnectionPool(resolved.connectionString);
+    const dbType = detectDatabaseType(connectionString);
+    const query = buildCreateTableQuery(dbType, params.schema, params.table, params.columns);
 
-    try {
-      const dbType = detectDatabaseType(resolved.connectionString);
-      const query = buildCreateTableQuery(dbType, params.schema, params.table, params.columns);
+    await executeQuery({
+      connectionPool,
+      query
+    });
 
-      await executeQuery({
-        connectionPool,
+    const tableName = params.schema ? `${params.schema}.${params.table}` : params.table;
+    const message = `Table '${tableName}' created successfully.`;
+
+    if (params.response_format === ResponseFormat.JSON) {
+      const jsonOutput = {
+        success: true,
+        message,
+        table: tableName,
+        columns: params.columns.length,
         query
-      });
-
-      const tableName = params.schema ? `${params.schema}.${params.table}` : params.table;
-      const message = `Table '${tableName}' created successfully.`;
-
-      if (params.response_format === ResponseFormat.JSON) {
-        const jsonOutput = {
-          success: true,
-          message,
-          table: tableName,
-          columns: params.columns.length,
-          query
-        };
-        return {
-          content: [{ type: "text", text: JSON.stringify(jsonOutput, null, 2) }],
-          structuredContent: jsonOutput
-        };
-      }
-
-      return {
-        content: [{ type: "text", text: `${message}\n\nQuery executed:\n\`\`\`sql\n${query}\n\`\`\`` }]
       };
-    } catch (error) {
       return {
-        content: [{
-          type: "text",
-          text: `Error creating table: ${error instanceof Error ? error.message : String(error)}`
-        }]
+        content: [{ type: "text", text: JSON.stringify(jsonOutput, null, 2) }],
+        structuredContent: jsonOutput
       };
-    } finally {
-      await connectionPool.close();
     }
-  } finally {
-    await resolved.cleanup();
+
+    return {
+      content: [{ type: "text", text: `${message}\n\nQuery executed:\n\`\`\`sql\n${query}\n\`\`\`` }]
+    };
+  } catch (error) {
+    return {
+      content: [{
+        type: "text",
+        text: `Error creating table: ${error instanceof Error ? error.message : String(error)}`
+      }]
+    };
   }
 }
 
@@ -236,67 +228,59 @@ function buildForeignKeyQueries(
  * Creates foreign key relationships
  */
 export async function createRelation(params: CreateRelationInput): Promise<{ content: Array<{ type: "text"; text: string }>; structuredContent?: { [x: string]: unknown } }> {
-  const resolved = await resolveConnection({
+  const { pool: connectionPool, connectionString } = await getOrCreateResolvedPool({
     connection_string: params.connection_string,
     connection_name: params.connection_name
   });
 
   try {
-    const connectionPool = await createConnectionPool(resolved.connectionString);
+    const dbType = detectDatabaseType(connectionString);
+    const queries = buildForeignKeyQueries(dbType, params.schema, params.table, params.foreign_keys);
 
-    try {
-      const dbType = detectDatabaseType(resolved.connectionString);
-      const queries = buildForeignKeyQueries(dbType, params.schema, params.table, params.foreign_keys);
+    const executedQueries: string[] = [];
+    let successCount = 0;
 
-      const executedQueries: string[] = [];
-      let successCount = 0;
-
-      for (const query of queries) {
-        try {
-          await executeQuery({
-            connectionPool,
-            query
-          });
-          executedQueries.push(query);
-          successCount++;
-        } catch (error) {
-          executedQueries.push(`-- Failed: ${error instanceof Error ? error.message : String(error)}\n${query}`);
-        }
+    for (const query of queries) {
+      try {
+        await executeQuery({
+          connectionPool,
+          query
+        });
+        executedQueries.push(query);
+        successCount++;
+      } catch (error) {
+        executedQueries.push(`-- Failed: ${error instanceof Error ? error.message : String(error)}\n${query}`);
       }
-
-      const tableName = params.schema ? `${params.schema}.${params.table}` : params.table;
-      const message = `Created ${successCount} of ${params.foreign_keys.length} foreign key(s) on table '${tableName}'.`;
-
-      if (params.response_format === ResponseFormat.JSON) {
-        const jsonOutput = {
-          success: successCount === params.foreign_keys.length,
-          message,
-          table: tableName,
-          foreign_keys_created: successCount,
-          total_foreign_keys: params.foreign_keys.length,
-          queries: executedQueries
-        };
-        return {
-          content: [{ type: "text", text: JSON.stringify(jsonOutput, null, 2) }],
-          structuredContent: jsonOutput
-        };
-      }
-
-      const queriesText = executedQueries.map((q, i) => `${i + 1}. ${q}`).join("\n\n");
-      return {
-        content: [{ type: "text", text: `${message}\n\nQueries executed:\n\`\`\`sql\n${queriesText}\n\`\`\`` }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: `Error creating relations: ${error instanceof Error ? error.message : String(error)}`
-        }]
-      };
-    } finally {
-      await connectionPool.close();
     }
-  } finally {
-    await resolved.cleanup();
+
+    const tableName = params.schema ? `${params.schema}.${params.table}` : params.table;
+    const message = `Created ${successCount} of ${params.foreign_keys.length} foreign key(s) on table '${tableName}'.`;
+
+    if (params.response_format === ResponseFormat.JSON) {
+      const jsonOutput = {
+        success: successCount === params.foreign_keys.length,
+        message,
+        table: tableName,
+        foreign_keys_created: successCount,
+        total_foreign_keys: params.foreign_keys.length,
+        queries: executedQueries
+      };
+      return {
+        content: [{ type: "text", text: JSON.stringify(jsonOutput, null, 2) }],
+        structuredContent: jsonOutput
+      };
+    }
+
+    const queriesText = executedQueries.map((q, i) => `${i + 1}. ${q}`).join("\n\n");
+    return {
+      content: [{ type: "text", text: `${message}\n\nQueries executed:\n\`\`\`sql\n${queriesText}\n\`\`\`` }]
+    };
+  } catch (error) {
+    return {
+      content: [{
+        type: "text",
+        text: `Error creating relations: ${error instanceof Error ? error.message : String(error)}`
+      }]
+    };
   }
 }

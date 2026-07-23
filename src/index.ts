@@ -27,6 +27,8 @@ import { createTable, CreateTableInputSchema } from "./tools/ddl-tools.js";
 import { createRelation, CreateRelationInputSchema } from "./tools/ddl-tools.js";
 import { createTrigger, CreateTriggerInputSchema } from "./tools/trigger-tools.js";
 import { exportErDiagram, ExportErDiagramInputSchema } from "./tools/diagram-tools.js";
+import { withGate } from "./services/tool-gate.js";
+import { evictAll } from "./services/pool-cache.js";
 
 // Create MCP server instance
 const server = new McpServer({
@@ -72,9 +74,7 @@ Setup:
       openWorldHint: false
     }
   },
-  async (params) => {
-    return await listConnections(params);
-  }
+  withGate("db_list_connections", { kind: "always-read" }, listConnections)
 );
 
 // Register db_ping tool
@@ -115,9 +115,7 @@ Recovery guide:
       openWorldHint: true
     }
   },
-  async (params) => {
-    return await testConnection(params);
-  }
+  withGate("db_ping", { kind: "always-read" }, testConnection)
 );
 
 // Register db_list_databases tool
@@ -163,9 +161,7 @@ Error Handling:
       openWorldHint: true
     }
   },
-  async (params) => {
-    return await listDatabases(params);
-  }
+  withGate("db_list_databases", { kind: "always-read" }, listDatabases)
 );
 
 // Register db_list_tables tool
@@ -218,9 +214,7 @@ Error Handling:
       openWorldHint: true
     }
   },
-  async (params) => {
-    return await listSchemas(params);
-  }
+  withGate("db_list_tables", { kind: "always-read" }, listSchemas)
 );
 
 // Register db_query tool
@@ -274,9 +268,7 @@ Error Handling:
       openWorldHint: true
     }
   },
-  async (params) => {
-    return await executeSQL(params);
-  }
+  withGate("db_query", { kind: "dynamic-sql" }, executeSQL)
 );
 
 // Register db_select tool
@@ -332,9 +324,7 @@ Error Handling:
       openWorldHint: true
     }
   },
-  async (params) => {
-    return await selectData(params);
-  }
+  withGate("db_select", { kind: "always-read" }, selectData)
 );
 
 // Register db_create_table tool
@@ -390,9 +380,7 @@ Error Handling:
       openWorldHint: true
     }
   },
-  async (params) => {
-    return await createTable(params);
-  }
+  withGate("db_create_table", { kind: "always-write" }, createTable)
 );
 
 // Register db_create_relation tool
@@ -447,9 +435,7 @@ Error Handling:
       openWorldHint: true
     }
   },
-  async (params) => {
-    return await createRelation(params);
-  }
+  withGate("db_create_relation", { kind: "always-write" }, createRelation)
 );
 
 // Register db_create_trigger tool
@@ -503,9 +489,7 @@ Error Handling:
       openWorldHint: true
     }
   },
-  async (params) => {
-    return await createTrigger(params);
-  }
+  withGate("db_create_trigger", { kind: "always-write" }, createTrigger)
 );
 
 // Register db_export_er_diagram tool
@@ -556,9 +540,7 @@ Error Handling:
       openWorldHint: true
     }
   },
-  async (params) => {
-    return await exportErDiagram(params);
-  }
+  withGate("db_export_er_diagram", { kind: "always-read" }, exportErDiagram)
 );
 
 // Main function for stdio transport
@@ -588,6 +570,14 @@ async function runHTTP() {
     console.error(`talk-sql MCP server running on http://localhost:${port}/mcp`);
   });
 }
+
+// Ensure cached connection pools and SSH tunnels are closed on shutdown
+async function shutdown() {
+  await evictAll();
+  process.exit(0);
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 // Choose transport based on environment
 const transport = process.env.TRANSPORT || 'stdio';

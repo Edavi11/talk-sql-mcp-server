@@ -20,6 +20,7 @@ vi.mock("../services/query-executor.js", async (importOriginal) => {
 
 import { createConnectionPool } from "../services/connection-manager.js";
 import { executeQuery } from "../services/query-executor.js";
+import { resetPoolCacheForTests } from "../services/pool-cache.js";
 
 const mockClose = vi.fn();
 function mockPool(type: DatabaseType = DatabaseType.POSTGRESQL) {
@@ -28,6 +29,7 @@ function mockPool(type: DatabaseType = DatabaseType.POSTGRESQL) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetPoolCacheForTests();
   mockClose.mockResolvedValue(undefined);
 });
 
@@ -44,6 +46,7 @@ describe("executeSQL", () => {
     const result = await executeSQL({
       connection_string: "postgresql://u:p@h/db",
       query: "SELECT * FROM users",
+      confirm: false,
       response_format: "markdown",
     });
 
@@ -62,6 +65,7 @@ describe("executeSQL", () => {
     const result = await executeSQL({
       connection_string: "postgresql://u:p@h/db",
       query: "SELECT * FROM users",
+      confirm: false,
       response_format: "json",
     });
 
@@ -78,6 +82,7 @@ describe("executeSQL", () => {
     const result = await executeSQL({
       connection_string: "postgresql://u:p@h/db",
       query: "UPDATE users SET active = true",
+      confirm: true,
       response_format: "markdown",
     });
 
@@ -91,6 +96,7 @@ describe("executeSQL", () => {
     const result = await executeSQL({
       connection_string: "postgresql://u:p@h/db",
       query: "DELETE FROM logs WHERE old = true",
+      confirm: false,
       response_format: "json",
     });
 
@@ -107,6 +113,7 @@ describe("executeSQL", () => {
     const result = await executeSQL({
       connection_string: "postgresql://u:p@h/db",
       query: "SELECT 1",
+      confirm: false,
       response_format: "markdown",
     });
 
@@ -120,6 +127,7 @@ describe("executeSQL", () => {
     const result = await executeSQL({
       connection_string: "postgresql://u:p@h/db",
       query: "SELCT 1",
+      confirm: false,
       response_format: "markdown",
     });
 
@@ -133,6 +141,7 @@ describe("executeSQL", () => {
     const result = await executeSQL({
       connection_string: "postgresql://u:p@h/db",
       query: "SELECT * FROM ghost",
+      confirm: false,
       response_format: "markdown",
     });
 
@@ -146,6 +155,7 @@ describe("executeSQL", () => {
     const result = await executeSQL({
       connection_string: "postgresql://u:p@h/db",
       query: "DROP TABLE users",
+      confirm: true,
       response_format: "markdown",
     });
 
@@ -159,6 +169,7 @@ describe("executeSQL", () => {
     const result = await executeSQL({
       connection_string: "postgresql://u:p@h/db",
       query: "INSERT INTO users VALUES (1)",
+      confirm: false,
       response_format: "markdown",
     });
 
@@ -172,19 +183,21 @@ describe("executeSQL", () => {
     const result = await executeSQL({
       connection_string: "postgresql://u:p@h/db",
       query: "SELECT 1",
+      confirm: false,
       response_format: "markdown",
     });
 
     expect(result.content[0].text).toContain("db_ping");
   });
 
-  it("closes pool even on error", async () => {
+  it("does not close the pool on error (pool lifecycle is owned by the TTL cache)", async () => {
     vi.mocked(createConnectionPool).mockResolvedValue(mockPool());
     vi.mocked(executeQuery).mockRejectedValue(new Error("fail"));
 
-    await executeSQL({ connection_string: "postgresql://u:p@h/db", query: "SELECT 1", response_format: "markdown" });
+    const result = await executeSQL({ connection_string: "postgresql://u:p@h/db", query: "SELECT 1", confirm: false, response_format: "markdown" });
 
-    expect(mockClose).toHaveBeenCalled();
+    expect(mockClose).not.toHaveBeenCalled();
+    expect(result.content[0].text).toContain("Error executing query");
   });
 });
 
@@ -385,9 +398,8 @@ describe("selectData", () => {
     expect(result.content[0].text).toContain("columns parameter");
   });
 
-  it("returns WHERE syntax error hint", async () => {
+  it("rejects an invalid WHERE clause before reaching the database", async () => {
     vi.mocked(createConnectionPool).mockResolvedValue(mockPool());
-    vi.mocked(executeQuery).mockRejectedValue(new Error("syntax error in WHERE clause"));
 
     const result = await selectData({
       connection_string: "postgresql://u:p@h/db",
@@ -398,6 +410,7 @@ describe("selectData", () => {
       response_format: "markdown",
     });
 
-    expect(result.content[0].text).toContain("where parameter");
+    expect(executeQuery).not.toHaveBeenCalled();
+    expect(result.content[0].text).toContain("where clause");
   });
 });

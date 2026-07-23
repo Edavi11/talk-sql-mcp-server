@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: talksql
+      POSTGRES_PASSWORD: talksql_test_pw
+      POSTGRES_DB: talksql_test
+    ports: ["55432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U talksql -d talksql_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: talksql_test_pw
+      MYSQL_DATABASE: talksql_test
+      MYSQL_USER: talksql
+      MYSQL_PASSWORD: talksql_test_pw
+    ports: ["53306:3306"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-utalksql", "-ptalksql_test_pw"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "TalkSql_Test_Pw1"
+      MSSQL_PID: "Developer"
+    ports: ["51433:1433"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  db2:
+    image: icr.io/db2_community/db2
+    privileged: true
+    environment:
+      LICENSE: "accept"
+      DB2INSTANCE: "db2inst1"
+      DB2INST1_PASSWORD: "talksql_test_pw"
+      DBNAME: "TALKSQL"
+    ports: ["50000:50000"]
+    healthcheck:
+      test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TALKSQL' || exit 1"]
+      interval: 30s
+      timeout: 20s
+      retries: 20
+      start_period: 180s

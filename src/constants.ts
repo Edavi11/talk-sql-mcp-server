@@ -17,6 +17,16 @@ export const MAX_LIMIT = 1000;
 
 export const DEFAULT_OFFSET = 0;
 
+/**
+ * Whether the server is running in read-only mode (TALK_SQL_READONLY).
+ * When true, any tool that can modify the database is blocked.
+ */
+export function isReadOnlyMode(): boolean {
+  const raw = process.env.TALK_SQL_READONLY;
+  if (!raw) return false;
+  return ["true", "1", "yes"].includes(raw.trim().toLowerCase());
+}
+
 // Cache for named connections loaded from config file
 let namedConnectionsCache: NamedConnection[] | null | undefined = undefined;
 

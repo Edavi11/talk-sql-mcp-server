@@ -82,6 +82,10 @@ describe("OffsetSchema", () => {
 });
 
 describe("WhereClauseSchema", () => {
+  // WhereClauseSchema only validates shape (length/optionality). Actual SQL-injection
+  // and dangerous-pattern rejection is done by validateWhereFragment() via real SQL
+  // parsing (see src/services/query-classifier.ts and its test suite), called from
+  // selectData() before the query is built - not at the Zod layer.
   it("accepts normal conditions", () => {
     expect(WhereClauseSchema.parse("id = 1")).toBe("id = 1");
     expect(WhereClauseSchema.parse("status = 'active' AND age > 18")).toBe("status = 'active' AND age > 18");
@@ -90,28 +94,8 @@ describe("WhereClauseSchema", () => {
 
   it("accepts undefined (optional)", () => expect(WhereClauseSchema.parse(undefined)).toBeUndefined());
 
-  it("rejects SQL comment injection (--)", () => {
-    expect(() => WhereClauseSchema.parse("1=1 -- comment")).toThrow();
-  });
-
-  it("rejects block comment injection (/* */)", () => {
-    expect(() => WhereClauseSchema.parse("1=1 /* comment */")).toThrow();
-  });
-
-  it("rejects semicolon + DROP", () => {
-    expect(() => WhereClauseSchema.parse("1=1; DROP TABLE users")).toThrow();
-  });
-
-  it("rejects semicolon + DELETE", () => {
-    expect(() => WhereClauseSchema.parse("1=1; DELETE FROM users")).toThrow();
-  });
-
-  it("rejects semicolon + TRUNCATE", () => {
-    expect(() => WhereClauseSchema.parse("1=1; TRUNCATE TABLE users")).toThrow();
-  });
-
-  it("rejects semicolon + EXEC", () => {
-    expect(() => WhereClauseSchema.parse("1=1; EXEC xp_cmdshell('cmd')")).toThrow();
+  it("accepts strings containing SQL keywords as shape-valid (rejected later by validateWhereFragment, not here)", () => {
+    expect(WhereClauseSchema.parse("1=1; DROP TABLE users")).toBe("1=1; DROP TABLE users");
   });
 
   it("rejects strings over 1000 chars", () => {

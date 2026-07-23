@@ -5,10 +5,10 @@
 
 import { z } from "zod";
 import { DatabaseType, ResponseFormat } from "../types.js";
-import { createConnectionPool, detectDatabaseType, sanitizeIdentifier } from "../services/connection-manager.js";
+import { detectDatabaseType, sanitizeIdentifier } from "../services/connection-manager.js";
 import { executeQuery } from "../services/query-executor.js";
 import { ConnectionStringSchema, ConnectionNameSchema, ResponseFormatSchema, TableNameSchema, SchemaNameSchema } from "../schemas/connection.js";
-import { resolveConnection } from "../constants.js";
+import { getOrCreateResolvedPool } from "../services/pool-cache.js";
 
 /**
  * Schema for db_create_trigger tool
@@ -101,71 +101,63 @@ END;
  * Creates a trigger
  */
 export async function createTrigger(params: CreateTriggerInput): Promise<{ content: Array<{ type: "text"; text: string }>; structuredContent?: { [x: string]: unknown } }> {
-  const resolved = await resolveConnection({
+  const { pool: connectionPool, connectionString } = await getOrCreateResolvedPool({
     connection_string: params.connection_string,
     connection_name: params.connection_name
   });
 
   try {
-    const connectionPool = await createConnectionPool(resolved.connectionString);
+    const dbType = detectDatabaseType(connectionString);
+    const query = buildCreateTriggerQuery(
+      dbType,
+      params.schema,
+      params.table,
+      params.trigger_name,
+      params.timing,
+      params.event,
+      params.procedure
+    );
 
-    try {
-      const dbType = detectDatabaseType(resolved.connectionString);
-      const query = buildCreateTriggerQuery(
-        dbType,
-        params.schema,
-        params.table,
-        params.trigger_name,
-        params.timing,
-        params.event,
-        params.procedure
-      );
+    // Execute query (may be multiple statements for PostgreSQL)
+    const statements = query.split(";").filter(s => s.trim().length > 0);
 
-      // Execute query (may be multiple statements for PostgreSQL)
-      const statements = query.split(";").filter(s => s.trim().length > 0);
-
-      for (const statement of statements) {
-        if (statement.trim()) {
-          await executeQuery({
-            connectionPool,
-            query: statement.trim() + (dbType === DatabaseType.POSTGRESQL && statement.includes("CREATE FUNCTION") ? "" : ";")
-          });
-        }
+    for (const statement of statements) {
+      if (statement.trim()) {
+        await executeQuery({
+          connectionPool,
+          query: statement.trim() + (dbType === DatabaseType.POSTGRESQL && statement.includes("CREATE FUNCTION") ? "" : ";")
+        });
       }
-
-      const tableName = params.schema ? `${params.schema}.${params.table}` : params.table;
-      const message = `Trigger '${params.trigger_name}' created successfully on table '${tableName}'.`;
-
-      if (params.response_format === ResponseFormat.JSON) {
-        const jsonOutput = {
-          success: true,
-          message,
-          trigger_name: params.trigger_name,
-          table: tableName,
-          timing: params.timing,
-          event: params.event,
-          query
-        };
-        return {
-          content: [{ type: "text", text: JSON.stringify(jsonOutput, null, 2) }],
-          structuredContent: jsonOutput
-        };
-      }
-
-      return {
-        content: [{ type: "text", text: `${message}\n\nQuery executed:\n\`\`\`sql\n${query}\n\`\`\`` }]
-      };
-    } catch (error) {
-      return {
-        content: [{
-          type: "text",
-          text: `Error creating trigger: ${error instanceof Error ? error.message : String(error)}`
-        }]
-      };
-    } finally {
-      await connectionPool.close();
     }
-  } finally {
-    await resolved.cleanup();
+
+    const tableName = params.schema ? `${params.schema}.${params.table}` : params.table;
+    const message = `Trigger '${params.trigger_name}' created successfully on table '${tableName}'.`;
+
+    if (params.response_format === ResponseFormat.JSON) {
+      const jsonOutput = {
+        success: true,
+        message,
+        trigger_name: params.trigger_name,
+        table: tableName,
+        timing: params.timing,
+        event: params.event,
+        query
+      };
+      return {
+        content: [{ type: "text", text: JSON.stringify(jsonOutput, null, 2) }],
+        structuredContent: jsonOutput
+      };
+    }
+
+    return {
+      content: [{ type: "text", text: `${message}\n\nQuery executed:\n\`\`\`sql\n${query}\n\`\`\`` }]
+    };
+  } catch (error) {
+    return {
+      content: [{
+        type: "text",
+        text: `Error creating trigger: ${error instanceof Error ? error.message : String(error)}`
+      }]
+    };
   }
 }

@@ -505,11 +505,14 @@ This server is designed so that AI assistants **always have a path forward** whe
 src/
 ├── index.ts                    # MCP server entry point, tool registration
 ├── types.ts                    # Shared TypeScript types and enums
-├── constants.ts                # Limits, connection resolution logic
+├── constants.ts                # Limits, connection resolution logic, read-only mode
 ├── schemas/
 │   └── connection.ts           # Zod validation schemas
 ├── services/
 │   ├── connection-manager.ts   # Connection pooling for all DB types
+│   ├── pool-cache.ts           # TTL-based cache of resolved connections + SSH tunnels
+│   ├── query-classifier.ts     # SQL statement classification and WHERE validation
+│   ├── tool-gate.ts            # Read-only mode + destructive-confirmation gating
 │   ├── query-executor.ts       # Query execution and result formatting
 │   ├── ssh-tunnel.ts           # SSH tunnel support
 │   ├── schema-introspection.ts # Engine-agnostic schema graph (tables, columns, FKs)
@@ -521,6 +524,22 @@ src/
     ├── trigger-tools.ts        # db_create_trigger
     └── diagram-tools.ts        # db_export_er_diagram
 ```
+
+---
+
+## 🧪 Integration Tests
+
+The unit test suite (`npm test`) runs entirely against mocks - no database or Docker required. A separate integration suite validates security-sensitive behavior (read-only mode, WHERE clause validation, confirm-gating, connection pool caching) against real PostgreSQL, MySQL, SQL Server, SQLite, and IBM DB2 instances.
+
+```bash
+npm run docker:test:up      # starts postgres, mysql, mssql, db2 via docker-compose.yml
+npm run test:integration    # runs src/__tests__/integration/*.integration.test.ts
+npm run docker:test:down    # stops and removes the containers + volumes
+```
+
+`docker:test:up` waits for every container's healthcheck to pass before returning. The DB2 image (`icr.io/db2_community/db2`) is large and can take several minutes on first pull and boot (it runs its own internal database-creation scripts) - this is expected, not a hang. SQLite tests need no container; they use a temp file created per test.
+
+Integration tests are opt-in and never run as part of `npm test` or CI's default test step.
 
 ---
 

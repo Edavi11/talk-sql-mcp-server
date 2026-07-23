@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { getConnectionString, CHARACTER_LIMIT, MAX_QUERY_LENGTH, DEFAULT_LIMIT, MAX_LIMIT, DEFAULT_OFFSET } from "../constants.js";
+import { getConnectionString, isReadOnlyMode, CHARACTER_LIMIT, MAX_QUERY_LENGTH, DEFAULT_LIMIT, MAX_LIMIT, DEFAULT_OFFSET } from "../constants.js";
 
 describe("constants", () => {
   it("CHARACTER_LIMIT is 25000", () => expect(CHARACTER_LIMIT).toBe(25000));
@@ -48,5 +48,62 @@ describe("getConnectionString", () => {
   it("throws when env variable is empty", () => {
     process.env.SQL_CONNECTION_STRING = "";
     expect(() => getConnectionString(undefined)).toThrow("Connection string is required");
+  });
+});
+
+describe("isReadOnlyMode", () => {
+  const originalEnv = process.env.TALK_SQL_READONLY;
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.TALK_SQL_READONLY;
+    } else {
+      process.env.TALK_SQL_READONLY = originalEnv;
+    }
+  });
+
+  it("returns false when unset", () => {
+    delete process.env.TALK_SQL_READONLY;
+    expect(isReadOnlyMode()).toBe(false);
+  });
+
+  it("returns false for empty string", () => {
+    process.env.TALK_SQL_READONLY = "";
+    expect(isReadOnlyMode()).toBe(false);
+  });
+
+  it("returns false for whitespace-only string", () => {
+    process.env.TALK_SQL_READONLY = "   ";
+    expect(isReadOnlyMode()).toBe(false);
+  });
+
+  it("returns true for 'true'", () => {
+    process.env.TALK_SQL_READONLY = "true";
+    expect(isReadOnlyMode()).toBe(true);
+  });
+
+  it("returns true for 'TRUE' (case-insensitive)", () => {
+    process.env.TALK_SQL_READONLY = "TRUE";
+    expect(isReadOnlyMode()).toBe(true);
+  });
+
+  it("returns true for '1'", () => {
+    process.env.TALK_SQL_READONLY = "1";
+    expect(isReadOnlyMode()).toBe(true);
+  });
+
+  it("returns true for 'yes'", () => {
+    process.env.TALK_SQL_READONLY = "yes";
+    expect(isReadOnlyMode()).toBe(true);
+  });
+
+  it("returns false for 'false'", () => {
+    process.env.TALK_SQL_READONLY = "false";
+    expect(isReadOnlyMode()).toBe(false);
+  });
+
+  it("returns false for an unrecognized value", () => {
+    process.env.TALK_SQL_READONLY = "maybe";
+    expect(isReadOnlyMode()).toBe(false);
   });
 });

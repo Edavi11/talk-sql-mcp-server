@@ -72,31 +72,56 @@ describe("sanitizeIdentifier", () => {
     expect(sanitizeIdentifier("user_id")).toBe("user_id");
   });
 
+  it("allows a leading underscore", () => {
+    expect(sanitizeIdentifier("_private")).toBe("_private");
+  });
+
   it("allows dots for schema.table notation", () => {
     expect(sanitizeIdentifier("dbo.users")).toBe("dbo.users");
+    expect(sanitizeIdentifier("schema.table")).toBe("schema.table");
   });
 
-  it("allows hyphens", () => {
-    expect(sanitizeIdentifier("my-table")).toBe("my-table");
+  it("throws on hyphens", () => {
+    expect(() => sanitizeIdentifier("my-table")).toThrow("Invalid SQL identifier");
   });
 
-  it("strips semicolons", () => {
-    expect(sanitizeIdentifier("users;DROP TABLE users")).toBe("usersDROPTABLEusers");
+  it("throws on semicolon injection attempts", () => {
+    expect(() => sanitizeIdentifier("users;DROP TABLE users")).toThrow("Invalid SQL identifier");
   });
 
-  it("strips quotes", () => {
-    expect(sanitizeIdentifier("users'OR'1'='1")).toBe("usersOR11");
+  it("throws on quote injection attempts", () => {
+    expect(() => sanitizeIdentifier("users'OR'1'='1")).toThrow("Invalid SQL identifier");
   });
 
-  it("strips spaces", () => {
-    expect(sanitizeIdentifier("my table")).toBe("mytable");
+  it("throws on spaces", () => {
+    expect(() => sanitizeIdentifier("my table")).toThrow("Invalid SQL identifier");
   });
 
-  it("strips special characters", () => {
-    expect(sanitizeIdentifier("table$name!")).toBe("tablename");
+  it("throws on special characters", () => {
+    expect(() => sanitizeIdentifier("table$name!")).toThrow("Invalid SQL identifier");
   });
 
-  it("returns empty string for fully invalid input", () => {
-    expect(sanitizeIdentifier("!@#$%^&*()")).toBe("");
+  it("throws on fully invalid input", () => {
+    expect(() => sanitizeIdentifier("!@#$%^&*()")).toThrow("Invalid SQL identifier");
+  });
+
+  it("throws on empty string", () => {
+    expect(() => sanitizeIdentifier("")).toThrow("Invalid SQL identifier");
+  });
+
+  it("throws on a leading digit", () => {
+    expect(() => sanitizeIdentifier("123table")).toThrow("Invalid SQL identifier");
+  });
+
+  it("throws on a trailing dot", () => {
+    expect(() => sanitizeIdentifier("table.")).toThrow("Invalid SQL identifier");
+  });
+
+  it("throws on a leading dot", () => {
+    expect(() => sanitizeIdentifier(".table")).toThrow("Invalid SQL identifier");
+  });
+
+  it("throws on consecutive dots", () => {
+    expect(() => sanitizeIdentifier("table..other")).toThrow("Invalid SQL identifier");
   });
 });

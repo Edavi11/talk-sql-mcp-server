@@ -20,6 +20,7 @@ vi.mock("../services/query-executor.js", async (importOriginal) => {
 
 import { createConnectionPool } from "../services/connection-manager.js";
 import { executeQuery } from "../services/query-executor.js";
+import { resetPoolCacheForTests } from "../services/pool-cache.js";
 
 const mockClose = vi.fn();
 function mockPool(type: DatabaseType) {
@@ -29,6 +30,7 @@ function mockPool(type: DatabaseType) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockClose.mockResolvedValue(undefined);
+  resetPoolCacheForTests();
 });
 
 describe("createTrigger", () => {
@@ -154,12 +156,13 @@ describe("createTrigger", () => {
     expect(result.content[0].text).toContain("trigger already exists");
   });
 
-  it("closes connection pool even on error", async () => {
+  it("does not close the pool on error (pool lifecycle is owned by the TTL cache)", async () => {
     vi.mocked(createConnectionPool).mockResolvedValue(mockPool(DatabaseType.MYSQL));
     vi.mocked(executeQuery).mockRejectedValue(new Error("fail"));
 
-    await createTrigger({ ...base, connection_string: "mysql://u:p@h/db", response_format: "markdown" });
+    const result = await createTrigger({ ...base, connection_string: "mysql://u:p@h/db", response_format: "markdown" });
 
-    expect(mockClose).toHaveBeenCalled();
+    expect(mockClose).not.toHaveBeenCalled();
+    expect(result.content[0].text).toContain("Error creating trigger");
   });
 });

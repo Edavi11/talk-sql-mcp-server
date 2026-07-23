@@ -5,11 +5,13 @@
 
 import { z } from "zod";
 import { DatabaseType, ResponseFormat, PaginatedResult } from "../types.js";
-import { createConnectionPool, detectDatabaseType } from "../services/connection-manager.js";
+import { detectDatabaseType, ConnectionPool } from "../services/connection-manager.js";
 import { executeQuery, formatResultsAsMarkdown, formatResultsAsJSON } from "../services/query-executor.js";
 import { ConnectionStringSchema, ConnectionNameSchema, ResponseFormatSchema, QuerySchema, LimitSchema, OffsetSchema, WhereClauseSchema, ColumnsSchema, TableNameSchema, SchemaNameSchema } from "../schemas/connection.js";
-import { DEFAULT_LIMIT, MAX_LIMIT, CHARACTER_LIMIT, resolveConnection } from "../constants.js";
+import { DEFAULT_LIMIT, MAX_LIMIT, CHARACTER_LIMIT } from "../constants.js";
 import { sanitizeIdentifier } from "../services/connection-manager.js";
+import { classifyQuery, validateWhereFragment } from "../services/query-classifier.js";
+import { getOrCreateResolvedPool } from "../services/pool-cache.js";
 
 /**
  * Schema for db_query tool
@@ -18,6 +20,8 @@ export const ExecuteSQLInputSchema = z.object({
   connection_name: ConnectionNameSchema,
   connection_string: ConnectionStringSchema,
   query: QuerySchema,
+  confirm: z.boolean().optional().default(false)
+    .describe("Must be set to true to execute a destructive statement (DROP/TRUNCATE, or UPDATE/DELETE without a WHERE clause). Ignored otherwise."),
   response_format: ResponseFormatSchema
 }).strict();
 
@@ -44,96 +48,90 @@ export type SelectDataInput = z.infer<typeof SelectDataInputSchema>;
  * Executes any SQL query
  */
 export async function executeSQL(params: ExecuteSQLInput): Promise<{ content: Array<{ type: "text"; text: string }>; structuredContent?: { [x: string]: unknown } }> {
-  const resolved = await resolveConnection({
+  const { pool: connectionPool, connectionString } = await getOrCreateResolvedPool({
     connection_string: params.connection_string,
     connection_name: params.connection_name
   });
 
+  const dbType = detectDatabaseType(connectionString);
+
   try {
-    const connectionPool = await createConnectionPool(resolved.connectionString);
+    const result = await executeQuery({
+      connectionPool,
+      query: params.query
+    });
 
-    try {
-      const result = await executeQuery({
-        connectionPool,
-        query: params.query
-      });
+    // Check if query was a SELECT (has rows) or DML/DDL (has rowCount)
+    const isSelectQuery = classifyQuery(params.query, dbType).type === "SELECT";
 
-      // Check if query was a SELECT (has rows) or DML/DDL (has rowCount)
-      const isSelectQuery = params.query.trim().toUpperCase().startsWith("SELECT");
-
-      if (isSelectQuery) {
-        // Format SELECT results
-        let textContent: string;
-        if (params.response_format === ResponseFormat.MARKDOWN) {
-          textContent = `# Query Results\n\n${formatResultsAsMarkdown(result.rows, result.columns)}\n\n**Rows returned:** ${result.rowCount}`;
-        } else {
-          const jsonOutput = {
-            rowCount: result.rowCount,
-            columns: result.columns || [],
-            rows: result.rows
-          };
-          textContent = formatResultsAsJSON(result.rows, result.rowCount, result.columns);
-          return {
-            content: [{ type: "text", text: textContent }],
-            structuredContent: jsonOutput
-          };
-        }
-
-        return {
-          content: [{ type: "text", text: textContent }]
-        };
+    if (isSelectQuery) {
+      // Format SELECT results
+      let textContent: string;
+      if (params.response_format === ResponseFormat.MARKDOWN) {
+        textContent = `# Query Results\n\n${formatResultsAsMarkdown(result.rows, result.columns)}\n\n**Rows returned:** ${result.rowCount}`;
       } else {
-        // Format DML/DDL results
-        const message = `Query executed successfully. Rows affected: ${result.rowCount}`;
-
-        if (params.response_format === ResponseFormat.JSON) {
-          const jsonOutput = {
-            success: true,
-            rowCount: result.rowCount,
-            message
-          };
-          return {
-            content: [{ type: "text", text: JSON.stringify(jsonOutput, null, 2) }],
-            structuredContent: jsonOutput
-          };
-        }
-
+        const jsonOutput = {
+          rowCount: result.rowCount,
+          columns: result.columns || [],
+          rows: result.rows
+        };
+        textContent = formatResultsAsJSON(result.rows, result.rowCount, result.columns);
         return {
-          content: [{ type: "text", text: message }]
+          content: [{ type: "text", text: textContent }],
+          structuredContent: jsonOutput
         };
       }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      const lower = errorMsg.toLowerCase();
-      const hints: string[] = [];
 
-      if (lower.includes("econnrefused") || lower.includes("etimedout") || lower.includes("failed to connect")) {
-        hints.push("The database server is not reachable. Use db_ping to diagnose the connection first.");
-      } else if (lower.includes("syntax error") || lower.includes("unexpected") || lower.includes("parse error")) {
-        hints.push("The SQL query has a syntax error. Review the query and correct the syntax before retrying.");
-        hints.push("For SQL Server batch scripts, use GO to separate statements.");
-      } else if (lower.includes("does not exist") || lower.includes("no such table") || lower.includes("unknown table")) {
-        hints.push("The table or column does not exist. Use db_list_tables to verify table names before retrying.");
-      } else if (lower.includes("permission") || lower.includes("access denied") || lower.includes("privilege")) {
-        hints.push("Insufficient permissions. The database user may not have the required privileges for this operation.");
-      } else if (lower.includes("duplicate") || lower.includes("unique constraint") || lower.includes("already exists")) {
-        hints.push("A unique constraint was violated. Check existing data before inserting or use ON CONFLICT/INSERT IGNORE.");
-      } else if (lower.includes("connection") || lower.includes("socket")) {
-        hints.push("Connection error. Use db_ping to verify connectivity and diagnose the issue.");
+      return {
+        content: [{ type: "text", text: textContent }]
+      };
+    } else {
+      // Format DML/DDL results
+      const message = `Query executed successfully. Rows affected: ${result.rowCount}`;
+
+      if (params.response_format === ResponseFormat.JSON) {
+        const jsonOutput = {
+          success: true,
+          rowCount: result.rowCount,
+          message
+        };
+        return {
+          content: [{ type: "text", text: JSON.stringify(jsonOutput, null, 2) }],
+          structuredContent: jsonOutput
+        };
       }
 
-      const hintText = hints.length > 0 ? `\n\nNext steps:\n${hints.map(h => `- ${h}`).join("\n")}` : "";
       return {
-        content: [{
-          type: "text",
-          text: `Error executing query: ${errorMsg}${hintText}`
-        }]
+        content: [{ type: "text", text: message }]
       };
-    } finally {
-      await connectionPool.close();
     }
-  } finally {
-    await resolved.cleanup();
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const lower = errorMsg.toLowerCase();
+    const hints: string[] = [];
+
+    if (lower.includes("econnrefused") || lower.includes("etimedout") || lower.includes("failed to connect")) {
+      hints.push("The database server is not reachable. Use db_ping to diagnose the connection first.");
+    } else if (lower.includes("syntax error") || lower.includes("unexpected") || lower.includes("parse error")) {
+      hints.push("The SQL query has a syntax error. Review the query and correct the syntax before retrying.");
+      hints.push("For SQL Server batch scripts, use GO to separate statements.");
+    } else if (lower.includes("does not exist") || lower.includes("no such table") || lower.includes("unknown table")) {
+      hints.push("The table or column does not exist. Use db_list_tables to verify table names before retrying.");
+    } else if (lower.includes("permission") || lower.includes("access denied") || lower.includes("privilege")) {
+      hints.push("Insufficient permissions. The database user may not have the required privileges for this operation.");
+    } else if (lower.includes("duplicate") || lower.includes("unique constraint") || lower.includes("already exists")) {
+      hints.push("A unique constraint was violated. Check existing data before inserting or use ON CONFLICT/INSERT IGNORE.");
+    } else if (lower.includes("connection") || lower.includes("socket")) {
+      hints.push("Connection error. Use db_ping to verify connectivity and diagnose the issue.");
+    }
+
+    const hintText = hints.length > 0 ? `\n\nNext steps:\n${hints.map(h => `- ${h}`).join("\n")}` : "";
+    return {
+      content: [{
+        type: "text",
+        text: `Error executing query: ${errorMsg}${hintText}`
+      }]
+    };
   }
 }
 
@@ -179,7 +177,7 @@ function buildSelectQuery(
  * Gets total count for pagination
  */
 async function getTotalCount(
-  connectionPool: Awaited<ReturnType<typeof createConnectionPool>>,
+  connectionPool: ConnectionPool,
   table: string,
   schema: string | undefined,
   where: string | undefined
@@ -214,122 +212,127 @@ async function getTotalCount(
  * Selects data from a table with pagination
  */
 export async function selectData(params: SelectDataInput): Promise<{ content: Array<{ type: "text"; text: string }>; structuredContent?: { [x: string]: unknown } }> {
-  const resolved = await resolveConnection({
+  const { pool: connectionPool, connectionString } = await getOrCreateResolvedPool({
     connection_string: params.connection_string,
     connection_name: params.connection_name
   });
 
+  const dbType = detectDatabaseType(connectionString);
+
   try {
-    const dbType = detectDatabaseType(resolved.connectionString);
-    const connectionPool = await createConnectionPool(resolved.connectionString);
+    if (params.where) {
+      const validation = validateWhereFragment(params.where, dbType);
+      if (!validation.valid) {
+        return {
+          content: [{
+            type: "text",
+            text: `Error selecting data: ${validation.error}\n\nNext steps:\n- Simplify the where clause to a single boolean expression referencing only columns of "${params.table}".\n- Remove subqueries or references to other tables.`
+          }]
+        };
+      }
+    }
 
-    try {
-      // Build and execute SELECT query
-      const query = buildSelectQuery(
-        params.table,
-        params.schema,
-        params.columns,
-        params.where,
-        params.limit,
-        params.offset,
-        dbType
-      );
+    // Build and execute SELECT query
+    const query = buildSelectQuery(
+      params.table,
+      params.schema,
+      params.columns,
+      params.where,
+      params.limit,
+      params.offset,
+      dbType
+    );
 
-      const result = await executeQuery({
-        connectionPool,
-        query
-      });
+    const result = await executeQuery({
+      connectionPool,
+      query
+    });
 
-      // Get total count for pagination
-      const total = await getTotalCount(
-        connectionPool,
-        params.table,
-        params.schema,
-        params.where
-      );
+    // Get total count for pagination
+    const total = await getTotalCount(
+      connectionPool,
+      params.table,
+      params.schema,
+      params.where
+    );
+
+    // Check character limit
+    let textContent: string;
+    const hasMore = total >= 0 ? total > params.offset + result.rows.length : false;
+    const nextOffset = hasMore ? params.offset + result.rows.length : undefined;
+
+    if (params.response_format === ResponseFormat.MARKDOWN) {
+      const lines: string[] = [];
+      lines.push(`# Data from ${params.schema ? `${params.schema}.` : ""}${params.table}`);
+      lines.push("");
+
+      if (total >= 0) {
+        lines.push(`**Total rows:** ${total}`);
+      }
+      lines.push(`**Showing:** ${result.rows.length} rows (offset: ${params.offset}, limit: ${params.limit})`);
+      lines.push("");
+
+      const markdownTable = formatResultsAsMarkdown(result.rows, result.columns);
+      const fullContent = lines.join("\n") + "\n\n" + markdownTable;
 
       // Check character limit
-      let textContent: string;
-      const hasMore = total >= 0 ? total > params.offset + result.rows.length : false;
-      const nextOffset = hasMore ? params.offset + result.rows.length : undefined;
-
-      if (params.response_format === ResponseFormat.MARKDOWN) {
-        const lines: string[] = [];
-        lines.push(`# Data from ${params.schema ? `${params.schema}.` : ""}${params.table}`);
-        lines.push("");
-
-        if (total >= 0) {
-          lines.push(`**Total rows:** ${total}`);
-        }
-        lines.push(`**Showing:** ${result.rows.length} rows (offset: ${params.offset}, limit: ${params.limit})`);
-        lines.push("");
-
-        const markdownTable = formatResultsAsMarkdown(result.rows, result.columns);
-        const fullContent = lines.join("\n") + "\n\n" + markdownTable;
-
-        // Check character limit
-        if (fullContent.length > CHARACTER_LIMIT) {
-          const truncatedRows = result.rows.slice(0, Math.floor(result.rows.length / 2));
-          const truncatedTable = formatResultsAsMarkdown(truncatedRows, result.columns);
-          textContent = lines.join("\n") + "\n\n" + truncatedTable + `\n\n*Response truncated. Use offset=${nextOffset || params.offset + truncatedRows.length} to see more results.*`;
-        } else {
-          textContent = fullContent;
-        }
-
-        if (hasMore && nextOffset) {
-          textContent += `\n\n**Has more:** Yes (use offset=${nextOffset} for next page)`;
-        }
+      if (fullContent.length > CHARACTER_LIMIT) {
+        const truncatedRows = result.rows.slice(0, Math.floor(result.rows.length / 2));
+        const truncatedTable = formatResultsAsMarkdown(truncatedRows, result.columns);
+        textContent = lines.join("\n") + "\n\n" + truncatedTable + `\n\n*Response truncated. Use offset=${nextOffset || params.offset + truncatedRows.length} to see more results.*`;
       } else {
-        const paginatedResult: PaginatedResult = {
-          total: total >= 0 ? total : undefined,
-          count: result.rows.length,
-          offset: params.offset,
-          limit: params.limit,
-          data: result.rows,
-          has_more: hasMore
-        };
-
-        if (nextOffset) {
-          paginatedResult.next_offset = nextOffset;
-        }
-
-        textContent = JSON.stringify(paginatedResult, null, 2);
-
-        return {
-          content: [{ type: "text", text: textContent }],
-          structuredContent: paginatedResult as unknown as { [x: string]: unknown }
-        };
+        textContent = fullContent;
       }
 
-      return {
-        content: [{ type: "text", text: textContent }]
+      if (hasMore && nextOffset) {
+        textContent += `\n\n**Has more:** Yes (use offset=${nextOffset} for next page)`;
+      }
+    } else {
+      const paginatedResult: PaginatedResult = {
+        total: total >= 0 ? total : undefined,
+        count: result.rows.length,
+        offset: params.offset,
+        limit: params.limit,
+        data: result.rows,
+        has_more: hasMore
       };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      const lower = errorMsg.toLowerCase();
-      const hints: string[] = [];
 
-      if (lower.includes("econnrefused") || lower.includes("etimedout") || lower.includes("failed to connect")) {
-        hints.push("Use db_ping to diagnose the connection before retrying.");
-      } else if (lower.includes("does not exist") || lower.includes("no such table") || lower.includes("unknown table")) {
-        hints.push("The table does not exist. Use db_list_tables to see available tables, then retry with the correct table name.");
-      } else if (lower.includes("column") && (lower.includes("does not exist") || lower.includes("unknown"))) {
-        hints.push("One or more columns don't exist. Try again without specifying columns (omit the columns parameter) to select all columns.");
-      } else if (lower.includes("syntax error")) {
-        hints.push("There is a syntax error in the WHERE clause. Simplify or remove the where parameter and retry.");
+      if (nextOffset) {
+        paginatedResult.next_offset = nextOffset;
       }
 
-      const hintText = hints.length > 0 ? `\n\nNext steps:\n${hints.map(h => `- ${h}`).join("\n")}` : "";
+      textContent = JSON.stringify(paginatedResult, null, 2);
+
       return {
-        content: [{
-          type: "text",
-          text: `Error selecting data: ${errorMsg}${hintText}`
-        }]
+        content: [{ type: "text", text: textContent }],
+        structuredContent: paginatedResult as unknown as { [x: string]: unknown }
       };
-    } finally {
-      await connectionPool.close();
     }
-  } finally {
-    await resolved.cleanup();
+
+    return {
+      content: [{ type: "text", text: textContent }]
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const lower = errorMsg.toLowerCase();
+    const hints: string[] = [];
+
+    if (lower.includes("econnrefused") || lower.includes("etimedout") || lower.includes("failed to connect")) {
+      hints.push("Use db_ping to diagnose the connection before retrying.");
+    } else if (lower.includes("does not exist") || lower.includes("no such table") || lower.includes("unknown table")) {
+      hints.push("The table does not exist. Use db_list_tables to see available tables, then retry with the correct table name.");
+    } else if (lower.includes("column") && (lower.includes("does not exist") || lower.includes("unknown"))) {
+      hints.push("One or more columns don't exist. Try again without specifying columns (omit the columns parameter) to select all columns.");
+    } else if (lower.includes("syntax error")) {
+      hints.push("There is a syntax error in the WHERE clause. Simplify or remove the where parameter and retry.");
+    }
+
+    const hintText = hints.length > 0 ? `\n\nNext steps:\n${hints.map(h => `- ${h}`).join("\n")}` : "";
+    return {
+      content: [{
+        type: "text",
+        text: `Error selecting data: ${errorMsg}${hintText}`
+      }]
+    };
   }
 }

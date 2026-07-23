@@ -206,11 +206,11 @@ async function executeSQLServerQuery(
     });
     
     const result = await request.query(query);
-    
+
     return {
       rows: result.recordset || [],
       rowCount: result.rowsAffected?.[0] || 0,
-      columns: result.recordset.columns ? Object.keys(result.recordset.columns) : []
+      columns: result.recordset?.columns ? Object.keys(result.recordset.columns) : []
     };
   } catch (error) {
     throw new Error(`SQL Server query error: ${error instanceof Error ? error.message : String(error)}`);

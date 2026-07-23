@@ -14,6 +14,7 @@ export interface ConnectionPool {
   type: DatabaseType;
   pool: unknown;
   close: () => Promise<void>;
+  cacheKey?: string;
 }
 
 /**
@@ -258,11 +259,16 @@ export async function createConnectionPool(connectionString: string): Promise<Co
 }
 
 /**
- * Sanitizes table/column names to prevent SQL injection
- * Allows alphanumeric, underscore, hyphen, and dot (for schema.table notation)
+ * Validates table/column/schema identifiers to prevent SQL injection.
+ * Allows letters, digits, and underscores, with optional dot-separated
+ * schema.table segments. Throws on anything else instead of silently
+ * stripping invalid characters.
  */
 export function sanitizeIdentifier(identifier: string): string {
-  // Allow alphanumeric, underscore, hyphen, and dot (used in schema.table)
-  // Strip anything else to prevent injection
-  return identifier.replace(/[^a-zA-Z0-9_\-.]/g, "");
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(identifier)) {
+    throw new Error(
+      `Invalid SQL identifier: "${identifier}". Identifiers must start with a letter or underscore and contain only letters, digits, and underscores, with optional single-dot schema.table separators.`
+    );
+  }
+  return identifier;
 }

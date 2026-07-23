@@ -21,6 +21,7 @@ vi.mock("../services/query-executor.js", async (importOriginal) => {
 
 import { createConnectionPool } from "../services/connection-manager.js";
 import { executeQuery } from "../services/query-executor.js";
+import { resetPoolCacheForTests } from "../services/pool-cache.js";
 
 const mockClose = vi.fn();
 function mockPool(type: DatabaseType) {
@@ -30,6 +31,7 @@ function mockPool(type: DatabaseType) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockClose.mockResolvedValue(undefined);
+  resetPoolCacheForTests();
 });
 
 // ─── createTable ──────────────────────────────────────────────────────────────
@@ -148,18 +150,19 @@ describe("createTable", () => {
     expect(result.content[0].text).toContain("table already exists");
   });
 
-  it("closes connection pool even on error", async () => {
+  it("does not close the pool on error (pool lifecycle is owned by the TTL cache)", async () => {
     vi.mocked(createConnectionPool).mockResolvedValue(mockPool(DatabaseType.POSTGRESQL));
     vi.mocked(executeQuery).mockRejectedValue(new Error("fail"));
 
-    await createTable({
+    const result = await createTable({
       connection_string: "postgresql://user:pass@localhost/db",
       table: "users",
       columns: [{ name: "id", type: "INT" }],
       response_format: "markdown",
     });
 
-    expect(mockClose).toHaveBeenCalled();
+    expect(mockClose).not.toHaveBeenCalled();
+    expect(result.content[0].text).toContain("Error creating table");
   });
 });
 
@@ -247,7 +250,7 @@ describe("createRelation", () => {
   it("throws when connection pool creation fails", async () => {
     vi.mocked(createConnectionPool).mockRejectedValue(new Error("connection refused"));
 
-    // createConnectionPool is called outside try/catch in createRelation, so the error propagates
+    // getOrCreateResolvedPool (called outside try/catch in createRelation) propagates the error
     await expect(createRelation({
       connection_string: "postgresql://user:pass@localhost/db",
       table: "orders",
